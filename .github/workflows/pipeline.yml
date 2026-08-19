@@ -1,0 +1,72 @@
+name: F1 data pipeline
+
+on:
+  schedule:
+    # Once a day at 04:00 UTC. Trigger manually from the Actions tab
+    # for tighter refreshes during a race weekend.
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  BQ_RAW_DATASET: ${{ vars.BQ_RAW_DATASET }}
+  BQ_LOCATION: ${{ vars.BQ_LOCATION }}
+  GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write GCP service account key
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+      - name: Run OpenF1 ingestion
+        run: python -m ingestion.run
+
+      - name: Write dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml <<EOF
+          thef1lab:
+            target: prod
+            outputs:
+              prod:
+                type: bigquery
+                method: service-account
+                project: ${GCP_PROJECT_ID}
+                dataset: dbt
+                location: ${BQ_LOCATION}
+                keyfile: ${GOOGLE_APPLICATION_CREDENTIALS}
+                threads: 4
+          EOF
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps
+
+      - name: dbt seed
+        working-directory: dbt
+        run: dbt seed
+
+      - name: dbt run
+        working-directory: dbt
+        run: dbt run
+
+      - name: dbt test
+        working-directory: dbt
+        run: dbt test
+
+      - name: Remove service account key
+        if: always()
+        run: rm -f "$GOOGLE_APPLICATION_CREDENTIALS"
