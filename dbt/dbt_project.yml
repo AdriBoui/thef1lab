@@ -1,0 +1,23 @@
+name: "thef1lab"
+version: "1.0.0"
+config-version: 2
+
+profile: "thef1lab"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  thef1lab:
+    staging:
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  thef1lab:
+    +schema: marts

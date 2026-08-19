@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# GCP credentials — never commit these
+credentials/
+*service-account*.json
+*gcp-key*.json
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/profiles.yml
+
+# raw data landing (local dev only)
+data/raw/
+
+.DS_Store

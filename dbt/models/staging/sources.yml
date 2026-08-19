@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: openf1_raw
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    schema: "{{ env_var('BQ_RAW_DATASET', 'raw_openf1') }}"
+    description: >
+      Raw landing tables loaded by the Python ingestion job (full refresh,
+      one load per pipeline run) directly from the OpenF1 public API.
+    tables:
+      - name: raw_meetings
+      - name: raw_sessions
+      - name: raw_drivers
+      - name: raw_laps
+      - name: raw_stints
+      - name: raw_pit
+      - name: raw_race_control
+      - name: raw_weather
+      - name: raw_session_result
