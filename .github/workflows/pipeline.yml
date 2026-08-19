@@ -1,10 +1,11 @@
 name: F1 data pipeline
 
 on:
-  schedule:
-    # Once a day at 04:00 UTC. Trigger manually from the Actions tab
-    # for tighter refreshes during a race weekend.
-    - cron: "0 4 * * *"
+  # Manual only for now — run it from the Actions tab ("Run workflow").
+  # The daily schedule is deliberately disabled until the GCP secrets are
+  # configured on the repo; re-enable by uncommenting the block below.
+  # schedule:
+  #   - cron: "0 4 * * *"
   workflow_dispatch: {}
 
 env:
