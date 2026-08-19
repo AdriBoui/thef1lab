@@ -1,0 +1,92 @@
+version: 2
+
+models:
+  - name: stg_meetings
+    columns:
+      - name: meeting_key
+        data_tests:
+          - unique
+          - not_null
+
+  - name: stg_sessions
+    columns:
+      - name: session_key
+        data_tests:
+          - unique
+          - not_null
+      - name: meeting_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_meetings')
+              field: meeting_key
+
+  - name: stg_drivers
+    columns:
+      - name: driver_number
+        data_tests:
+          - not_null
+      - name: session_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sessions')
+              field: session_key
+
+  - name: stg_laps
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+      - name: driver_number
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - session_key
+            - driver_number
+            - lap_number
+
+  - name: stg_stints
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - session_key
+            - driver_number
+            - stint_number
+
+  - name: stg_pit
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+      - name: driver_number
+        data_tests:
+          - not_null
+
+  - name: stg_race_control
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+
+  - name: stg_weather
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+
+  - name: stg_session_result
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - session_key
+            - driver_number
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+      - name: driver_number
+        data_tests:
+          - not_null

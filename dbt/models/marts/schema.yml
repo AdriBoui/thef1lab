@@ -1,0 +1,104 @@
+version: 2
+
+models:
+  - name: dim_meeting
+    description: One row per Grand Prix / testing event of the season.
+    columns:
+      - name: meeting_key
+        data_tests:
+          - unique
+          - not_null
+
+  - name: dim_session
+    description: One row per session (practice, qualifying, race) within a meeting.
+    columns:
+      - name: session_key
+        data_tests:
+          - unique
+          - not_null
+      - name: meeting_key
+        data_tests:
+          - relationships:
+              to: ref('dim_meeting')
+              field: meeting_key
+
+  - name: dim_driver
+    description: One row per driver, latest known team/details for the season.
+    columns:
+      - name: driver_number
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fact_laps
+    description: One row per driver per lap with sector times and speed traps.
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          - relationships:
+              to: ref('dim_driver')
+              field: driver_number
+
+  - name: fact_pit_stops
+    description: One row per pit stop.
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          # warn (not error): OpenF1 occasionally emits pit records for
+          # phantom driver numbers (e.g. 241/243/247) that never appear in
+          # the drivers endpoint. We surface the anomaly without failing the
+          # build on corrupt upstream data.
+          - relationships:
+              to: ref('dim_driver')
+              field: driver_number
+              config:
+                severity: warn
+
+  - name: fact_race_results
+    description: One row per driver per race session with final classification and points.
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          - relationships:
+              to: ref('dim_driver')
+              field: driver_number
+
+  - name: mart_pit_stop_performance
+    description: Pit-stop performance ranked by team (median stationary time) across the season's races.
+    columns:
+      - name: team_name
+        data_tests:
+          - unique
+          - not_null
+      - name: median_stop_seconds
+        data_tests:
+          - not_null
+
+  - name: mart_driver_standings
+    description: Points per driver per race plus running cumulative total (championship evolution).
+    columns:
+      - name: cumulative_points
+        data_tests:
+          - not_null
+
+  - name: mart_driver_pace
+    description: Per-driver, per-race median lap time, fastest lap and lap-time consistency (std dev).
+    columns:
+      - name: median_lap_seconds
+        data_tests:
+          - not_null
