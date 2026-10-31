@@ -1,0 +1,7 @@
+# Dépendances du dashboard uniquement (Streamlit Cloud lit ce fichier)
+streamlit>=1.50
+plotly>=5.24
+pandas>=2.2
+google-cloud-bigquery>=3.25
+db-dtypes>=1.3
+python-dotenv>=1.0

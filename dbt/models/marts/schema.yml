@@ -65,8 +65,14 @@ models:
                 severity: warn
 
   - name: fact_race_results
-    description: One row per driver per race session with final classification and points.
+    description: >
+      One row per driver per Grand Prix or Sprint with final classification and
+      points (each session type uses its own points scale).
     columns:
+      - name: session_name
+        data_tests:
+          - accepted_values:
+              values: ['Race', 'Sprint']
       - name: session_key
         data_tests:
           - relationships:
@@ -77,6 +83,23 @@ models:
           - relationships:
               to: ref('dim_driver')
               field: driver_number
+
+  - name: fact_stints
+    description: One row per driver per tyre stint (compound and lap range).
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          - relationships:
+              to: ref('dim_driver')
+              field: driver_number
+              config:
+                severity: warn
 
   - name: mart_pit_stop_performance
     description: Pit-stop performance ranked by team (median stationary time) across the season's races.
