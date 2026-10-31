@@ -13,7 +13,8 @@ BigQuery staging dataset   (typed/cleaned views)
     ↓
 BigQuery marts dataset     (dim_* / fact_* tables + dbt tests)
     ↓
-Looker Studio              (public dashboard, connects directly to BigQuery)
+Streamlit dashboard        (dashboard/, public app reading the marts)
+Looker Studio              (alternative, connects directly to BigQuery)
 ```
 
 Orchestration: a single GitHub Actions workflow
@@ -39,7 +40,8 @@ free, no server to maintain.
 
 ```
 ingestion/         Python client for the OpenF1 API + BigQuery loader
-dbt/                dbt-core project (staging views, mart tables, tests, seed)
+dbt/                dbt-core project (staging views, mart tables, tests, seeds)
+dashboard/          Streamlit app reading the marts (championship, race, head-to-head)
 .github/workflows/  Scheduled pipeline (GitHub Actions)
 ```
 
@@ -140,6 +142,34 @@ for the `service-account` method, pointing `keyfile` at
 4. Build your report, then **Share → Manage access → General access → Anyone
    with the link** to publish it publicly without requiring a Google sign-in
    from viewers
+
+## 4. Streamlit dashboard
+
+`dashboard/` is a Streamlit app with three views: championship (standings,
+points progression, constructors), race (lap pace, tyre strategy, fastest
+stops) and driver head-to-head. It only reads `marts` tables; every SQL query
+lives in `dashboard/queries.py` behind a column contract, so a dbt change
+means editing one file.
+
+**Run locally** (from the repo root, reuses your `.env` and service account):
+
+```bash
+pip install -r dashboard/requirements.txt
+streamlit run dashboard/app.py
+# no credentials yet? DEMO_MODE=1 streamlit run dashboard/app.py
+```
+
+**Publish for free** on Streamlit Community Cloud:
+
+1. Create a **read-only** service account `f1-dashboard` with
+   `BigQuery Data Viewer` + `BigQuery Job User`, and download its JSON key.
+   Don't reuse `f1-pipeline`: it can write, and this key leaves GCP.
+2. [share.streamlit.io](https://share.streamlit.io) → **New app** → this repo,
+   main file `dashboard/app.py`.
+3. **Advanced settings → Secrets**: paste `.streamlit/secrets.toml.example`
+   filled with the key.
+
+Queries are cached for 1 hour, so BigQuery cost stays at zero in practice.
 
 ## Roadmap / nice-to-haves
 
