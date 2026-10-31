@@ -15,7 +15,8 @@ See `README.md` for the full GCP setup and rationale — this file covers only w
 OpenF1 API → ingestion/ (Python) → BigQuery raw_openf1 → dbt/ → staging (views) → marts (tables) → dashboard/ (Streamlit) or Looker Studio
 ```
 
-Orchestrated by a single daily GitHub Actions workflow: `.github/workflows/pipeline.yml`.
+Orchestrated by a single GitHub Actions workflow: `.github/workflows/pipeline.yml` (daily cron
+currently disabled — manual `workflow_dispatch` only, see Status).
 
 ## Layout
 
@@ -51,23 +52,42 @@ when you need Grand Prix only.
 - `.env` holds local config; `.env.example` documents it. Never commit `.env` or `credentials/`.
 - Run dbt from the `dbt/` directory.
 
-## Status — 19 July 2026
+## Mode de travail
 
-The pipeline runs end to end locally: OpenF1 ingestion → `raw_openf1` → dbt (staging views + mart
-tables) → dbt tests passing. `docs/guide-looker.md` is written and covers three visuals (pit-stop
-performance by team, championship progression, driver pace), the public-sharing setting, and
-embedding into the Notion portfolio page.
+The user is learning Data Engineering through this project. In every session:
 
-**Next steps and open items live in Notion**, not in this file — read it when picking up work on
-this project: https://app.notion.com/p/3b2d8cfcd53981fe9718cb47cee0f8a9
+- **Explique avant d'agir.** Before each step, say what you are about to do and why (the DE
+  concept behind it), then **wait for the user's go-ahead** before running commands or editing files.
+- **Une branche et une PR par fonctionnalité.** Never work directly on `main`: create a
+  `feat/…` / `fix/…` / `docs/…` branch, commit there, and open a PR on `AdriBoui/thef1lab`.
+  Commit and push only when the user asks.
+- **Jamais de secrets dans git.** Never commit, print, or paste `.env`, `credentials/`,
+  `.streamlit/secrets.toml` or any service-account JSON. Check `git status` before each commit.
+- Prefer letting the user type commands and code themselves when it helps them learn; explain
+  errors rather than silently fixing them.
 
-### Blocker to know about
+## Status — 31 October 2026
 
-The git repo is initialised but has **no commits and no remote**, so the Actions workflow cannot
-run — nothing is pushed. A first commit plus a GitHub remote are prerequisites for automating the
-pipeline at all. The `.gitignore` is already correct (`.env`, `credentials/`, service-account keys
-excluded), so a first commit would be clean. The user has said they don't want git for now: raise it
-when the automation step comes up, don't push for it.
+The repo is on GitHub (`AdriBoui/thef1lab`, branch `main`). PR #1 (`feat/dashboard`) is merged: a
+Streamlit dashboard (`dashboard/`), the sprint-points fix and `fact_stints`. The Actions workflow
+exists but its cron is **disabled** — it is `workflow_dispatch` only until the GCP secrets are set.
+
+The local folder was recreated from GitHub, so the **local secrets are gone**: no `.env`, no
+`credentials/` key. `~/.dbt/profiles.yml` still points its `keyfile` at the old, deleted path
+(`~/Documents/thef1lab/credentials/…`). The `.venv` has the dashboard deps but **not dbt**.
+`docs/guide-looker.md` (Looker Studio) is still valid as an alternative to Streamlit.
+
+Roadmap agreed with the user (one branch + PR per step):
+
+1. Recreate `.env` and the service-account key — secrets management, GCP IAM
+2. Run the pipeline locally (ingestion, `dbt seed`, `dbt run`, `dbt test`)
+3. Point the dashboard at the real data
+4. Add the user's own views / charts (Streamlit, Plotly, analytical SQL)
+5. Publish on Streamlit Community Cloud (read-only `f1-dashboard` service account)
+6. Re-enable the GitHub Actions cron
+
+Older notes and open items also live in Notion:
+https://app.notion.com/p/3b2d8cfcd53981fe9718cb47cee0f8a9
 
 ### Costs — already verified, no need to recompute
 
