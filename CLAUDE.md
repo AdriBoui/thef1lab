@@ -12,7 +12,7 @@ See `README.md` for the full GCP setup and rationale — this file covers only w
 ## Pipeline
 
 ```
-OpenF1 API → ingestion/ (Python) → BigQuery raw_openf1 → dbt/ → staging (views) → marts (tables) → Looker Studio
+OpenF1 API → ingestion/ (Python) → BigQuery raw_openf1 → dbt/ → staging (views) → marts (tables) → dashboard/ (Streamlit) or Looker Studio
 ```
 
 Orchestrated by a single daily GitHub Actions workflow: `.github/workflows/pipeline.yml`.
@@ -25,6 +25,7 @@ Orchestrated by a single daily GitHub Actions workflow: `.github/workflows/pipel
 | `dbt/models/staging/` | Typed/cleaned views over raw |
 | `dbt/models/marts/` | `dim_*` / `fact_*` tables + dbt tests |
 | `dbt/seeds/`, `dbt/macros/` | Seed data and macros |
+| `dashboard/` | Streamlit app on the marts. SQL only in `queries.py` (column `CONTRACT`); run from repo root |
 | `docs/` | Looker guide, Notion write-up |
 | `.venv/` | Project virtualenv (note the dot — differs from the other two projects) |
 | `credentials/` | GCP service-account key — **never commit, never print** |
@@ -35,6 +36,13 @@ Orchestrated by a single daily GitHub Actions workflow: `.github/workflows/pipel
   and BigQuery load jobs are free. Incremental is a documented v2, not an oversight.
 - **No raw telemetry** (`car_data`, `location`) — ~3.7 Hz per driver would burn the free tier.
 - **Current season only** — scope decision; `SEASON_YEAR` is the parameter to change.
+
+## Points scoring
+
+`fact_race_results` holds Grand Prix **and** Sprint results: OpenF1 tags both
+`session_type = 'Race'`, only `session_name` differs. Each uses its own seed
+(`f1_points_system`, `f1_sprint_points_system`). Filter on `session_name = 'Race'`
+when you need Grand Prix only.
 
 ## Conventions
 
