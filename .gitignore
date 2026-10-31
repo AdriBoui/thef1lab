@@ -19,3 +19,6 @@ dbt/profiles.yml
 data/raw/
 
 .DS_Store
+
+# Streamlit dashboard secrets
+.streamlit/secrets.toml
