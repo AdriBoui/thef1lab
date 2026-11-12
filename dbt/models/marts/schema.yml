@@ -83,6 +83,10 @@ models:
           - relationships:
               to: ref('dim_driver')
               field: driver_number
+      - name: team_name
+        description: Team the driver raced for in this session (point-in-time, not dim_driver's latest team).
+        data_tests:
+          - not_null
 
   - name: fact_stints
     description: One row per driver per tyre stint (compound and lap range).
@@ -115,6 +119,21 @@ models:
   - name: mart_driver_standings
     description: Points per driver per race plus running cumulative total (championship evolution).
     columns:
+      - name: cumulative_points
+        data_tests:
+          - not_null
+
+  - name: mart_constructor_standings
+    description: >
+      Constructors' championship: points per team per race weekend (Grand Prix + Sprint)
+      plus running cumulative total. Teams are point-in-time, from fact_race_results.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: ['team_name', 'meeting_key']
+    columns:
+      - name: team_name
+        data_tests:
+          - not_null
       - name: cumulative_points
         data_tests:
           - not_null
