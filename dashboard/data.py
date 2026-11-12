@@ -83,11 +83,19 @@ def load_all() -> tuple[dict[str, pd.DataFrame], list[str]]:
     return _clean(tables), warnings
 
 
+def _hex(colours: pd.Series) -> pd.Series:
+    return "#" + colours.fillna("888888").astype(str).str.lstrip("#").str.upper()
+
+
 def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     d = t["drivers"].copy()
-    d["team_colour"] = ("#" + d["team_colour"].fillna("888888").astype(str)
-                        .str.lstrip("#").str.upper())
+    d["team_colour"] = _hex(d["team_colour"])
     t["drivers"] = d.drop_duplicates("driver_number")
+    c = t["constructors"].copy()
+    c["team_colour"] = _hex(c["team_colour"])
+    c["points"] = pd.to_numeric(c["points"]).fillna(0)
+    c["cumulative_points"] = pd.to_numeric(c["cumulative_points"]).fillna(0)
+    t["constructors"] = c
     t["races"] = t["races"].sort_values("round").reset_index(drop=True)
     r = t["results"].copy()
     r["points"] = pd.to_numeric(r["points"]).fillna(0)

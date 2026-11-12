@@ -21,6 +21,9 @@ CONTRACT = {
     "pit_stops": ["session_key", "driver_number", "lap_number", "stop_duration"],
     "stints":    ["session_key", "driver_number", "stint_number",
                   "compound", "lap_start", "lap_end"],
+    # Une ligne par équipe et par week-end (GP + Sprint), cumul déjà calculé par dbt
+    "constructors": ["team_name", "team_colour", "meeting_key",
+                     "points", "cumulative_points"],
 }
 
 QUERIES = {
@@ -79,6 +82,15 @@ QUERIES = {
         from `{project}.{marts}.fact_stints` t
         join `{project}.{marts}.dim_session` s using (session_key)
         where s.session_name = 'Race' and s.year = {season}
+    """,
+
+    # Équipe « à date » : un pilote transféré en cours de saison laisse ses
+    # points à l'équipe avec laquelle il les a marqués (voir fact_race_results).
+    "constructors": """
+        select c.team_name, c.team_colour, c.meeting_key,
+               c.points, c.cumulative_points
+        from `{project}.{marts}.mart_constructor_standings` c
+        where c.season = {season}
     """,
 }
 
