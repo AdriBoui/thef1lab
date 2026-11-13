@@ -25,6 +25,18 @@ CONTRACT = {
     "conditions": ["session_key", "driver_number", "lap_number", "lap_duration",
                    "air_temperature", "track_temperature", "humidity",
                    "is_wet", "under_safety_car", "is_outlier_lap"],
+    # Un relais de course par ligne, avec sa pente de dégradation (voir dbt)
+    "tyres":     ["session_key", "driver_number", "stint_number", "compound",
+                  "clean_laps", "tyre_age_start", "tyre_age_end",
+                  "median_lap_seconds", "degradation_s_per_lap",
+                  "relative_degradation_s_per_lap", "pace_vs_field_seconds"],
+    # Qualif → grille réelle (pénalités incluses) → arrivée, Grand Prix uniquement
+    "grid":      ["session_key", "driver_number", "qualifying_position",
+                  "grid_position", "finish_position", "grid_penalty_places",
+                  "positions_gained"],
+    # Une ligne par équipe et par week-end (GP + Sprint), cumul déjà calculé par dbt
+    "constructors": ["team_name", "team_colour", "meeting_key",
+                     "points", "cumulative_points"],
 }
 
 QUERIES = {
@@ -94,6 +106,37 @@ QUERIES = {
         from `{project}.{marts}.fact_lap_conditions` c
         join `{project}.{marts}.dim_session` s using (session_key)
         where s.session_name = 'Race' and s.year = {season}
+    """,
+    # Optionnel. La pente brute est biaisée par l'allègement en carburant ;
+    # c'est la pente relative au peloton qu'il faut lire (voir le modèle dbt).
+    "tyres": """
+        select t.session_key, t.driver_number, t.stint_number, t.compound,
+               t.clean_laps, t.tyre_age_start, t.tyre_age_end,
+               t.median_lap_seconds, t.degradation_s_per_lap,
+               t.relative_degradation_s_per_lap, t.pace_vs_field_seconds
+        from `{project}.{marts}.fact_stint_degradation` t
+        join `{project}.{marts}.dim_session` s using (session_key)
+        where s.session_name = 'Race' and s.year = {season}
+    """,
+
+    # La grille vient de l'endpoint OpenF1 starting_grid, pas du classement des
+    # qualifs : une pénalité moteur fait partir un pilote plus loin (voir dbt).
+    "grid": """
+        select g.session_key, g.driver_number, g.qualifying_position,
+               g.grid_position, g.finish_position, g.grid_penalty_places,
+               g.positions_gained
+        from `{project}.{marts}.fact_grid_vs_result` g
+        join `{project}.{marts}.dim_session` s using (session_key)
+        where g.session_name = 'Race' and s.year = {season}
+    """,
+
+    # Équipe « à date » : un pilote transféré en cours de saison laisse ses
+    # points à l'équipe avec laquelle il les a marqués (voir fact_race_results).
+    "constructors": """
+        select c.team_name, c.team_colour, c.meeting_key,
+               c.points, c.cumulative_points
+        from `{project}.{marts}.mart_constructor_standings` c
+        where c.season = {season}
     """,
 }
 

@@ -55,6 +55,13 @@ def _client():
     return bigquery.Client(project=cfg["project"], location=cfg["location"])
 
 
+OPTIONAL = {  # requête: message affiché si sa table manque
+    "stints": "Stratégie pneus indisponible : lance `dbt run` pour créer marts.fact_stints.",
+    "grid": "Grille de départ indisponible : relance l'ingestion puis `dbt run` "
+            "pour créer marts.fact_grid_vs_result.",
+}
+
+
 @st.cache_data(ttl=3600, show_spinner="Chargement des données…")
 def load_all() -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Renvoie (tables, avertissements). Cache 1 h = coût BigQuery quasi nul."""
@@ -74,20 +81,27 @@ def load_all() -> tuple[dict[str, pd.DataFrame], list[str]]:
                 raise ValueError(f"colonnes manquantes : {', '.join(sorted(missing))}")
             tables[name] = df[CONTRACT[name]]
         except Exception as e:
-            if name == "stints":  # optionnel
+            if name in OPTIONAL:  # une vue en moins plutôt qu'un dashboard en panne
                 tables[name] = pd.DataFrame(columns=CONTRACT[name])
-                warnings.append("Stratégie pneus indisponible : lance `dbt run` "
-                                "pour créer marts.fact_stints.")
+                warnings.append(OPTIONAL[name])
             else:
                 raise RuntimeError(f"Requête « {name} » en échec : {e}") from e
     return _clean(tables), warnings
 
 
+def _hex(colours: pd.Series) -> pd.Series:
+    return "#" + colours.fillna("888888").astype(str).str.lstrip("#").str.upper()
+
+
 def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     d = t["drivers"].copy()
-    d["team_colour"] = ("#" + d["team_colour"].fillna("888888").astype(str)
-                        .str.lstrip("#").str.upper())
+    d["team_colour"] = _hex(d["team_colour"])
     t["drivers"] = d.drop_duplicates("driver_number")
+    c = t["constructors"].copy()
+    c["team_colour"] = _hex(c["team_colour"])
+    c["points"] = pd.to_numeric(c["points"]).fillna(0)
+    c["cumulative_points"] = pd.to_numeric(c["cumulative_points"]).fillna(0)
+    t["constructors"] = c
     t["races"] = t["races"].sort_values("round").reset_index(drop=True)
     r = t["results"].copy()
     r["points"] = pd.to_numeric(r["points"]).fillna(0)
@@ -104,4 +118,13 @@ def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
     for col in ("is_wet", "under_safety_car", "is_outlier_lap"):
         cd[col] = cd[col].fillna(False).astype(bool)
     t["conditions"] = cd[cd.driver_number.isin(known)]
+    ty = t["tyres"].copy()
+    for col in ty.columns.drop(["compound"]):
+        ty[col] = pd.to_numeric(ty[col], errors="coerce")  # NULL = relais trop court
+    ty["compound"] = ty["compound"].astype(str).str.upper()
+    t["tyres"] = ty[ty.driver_number.isin(known)]
+    g = t["grid"].copy()
+    for col in g.columns.drop(["session_key", "driver_number"]):
+        g[col] = pd.to_numeric(g[col], errors="coerce")  # NULL = non classé / départ des stands
+    t["grid"] = g[g.driver_number.isin(known)]
     return t
