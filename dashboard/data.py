@@ -112,6 +112,11 @@ def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         t[k] = t[k][t[k].driver_number.isin(known)]
     s = t["stints"]
     t["stints"] = s.dropna(subset=["lap_start", "lap_end"])
+    ty = t["tyres"].copy()
+    for col in ty.columns.drop(["compound"]):
+        ty[col] = pd.to_numeric(ty[col], errors="coerce")  # NULL = relais trop court
+    ty["compound"] = ty["compound"].astype(str).str.upper()
+    t["tyres"] = ty[ty.driver_number.isin(known)]
     g = t["grid"].copy()
     for col in g.columns.drop(["session_key", "driver_number"]):
         g[col] = pd.to_numeric(g[col], errors="coerce")  # NULL = non classé / départ des stands
