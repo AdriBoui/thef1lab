@@ -160,8 +160,8 @@ The user writes the Notion portfolio themselves, with screenshots, linking to th
 - **A dev dataset per branch** (dbt `target`): BigQuery currently has one shared dev environment,
   so building a model from one branch overwrites another branch's version.
 
-Older notes also live in Notion:
-(lien privé retiré — demander au propriétaire)
+Older notes also live in the user's private Notion workspace — ask them for the link rather than
+storing it here: this repo is public, and a Notion page URL is an access path.
 
 ### Costs — already verified, no need to recompute
 
