@@ -98,4 +98,9 @@ def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         t[k] = t[k][t[k].driver_number.isin(known)]
     s = t["stints"]
     t["stints"] = s.dropna(subset=["lap_start", "lap_end"])
+    ty = t["tyres"].copy()
+    for col in ty.columns.drop(["compound"]):
+        ty[col] = pd.to_numeric(ty[col], errors="coerce")  # NULL = relais trop court
+    ty["compound"] = ty["compound"].astype(str).str.upper()
+    t["tyres"] = ty[ty.driver_number.isin(known)]
     return t

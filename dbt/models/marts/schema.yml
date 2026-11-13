@@ -125,3 +125,58 @@ models:
       - name: median_lap_seconds
         data_tests:
           - not_null
+
+  - name: fact_stint_degradation
+    description: >
+      One row per tyre stint with an estimated degradation slope (seconds lost
+      per lap of tyre age), fitted by least squares on the stint's clean laps.
+      An estimate, not a measurement: it also carries fuel burn, traffic and
+      track evolution. NULL below 5 clean laps.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [session_key, driver_number, stint_number]
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          - not_null
+      - name: compound
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [SOFT, MEDIUM, HARD, INTERMEDIATE, WET]
+      - name: clean_laps
+        description: Laps kept after dropping out/in laps, lap 1 and laps above 107% of the stint median.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: degradation_s_per_lap
+        description: >
+          Raw least-squares slope of lap time against tyre age. Dominated by fuel
+          burn, which makes the car quicker as the race goes on and cancels most
+          of the tyre loss. Kept to show the bias; read the relative slope instead.
+        # A stint gaining or losing more than 3 s per lap is not degradation,
+        # it is a drying track or corrupt timing -- worth knowing about.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: -3
+              max_value: 3
+      - name: relative_degradation_s_per_lap
+        description: >
+          Same slope, fitted on the lap time relative to the field median for that
+          lap. Fuel burn and track evolution cancel out. Positive = faded faster
+          than the field. Not an absolute loss: the field median carries the
+          average tyre wear of the moment.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: -3
+              max_value: 3
+      - name: pace_vs_field_seconds
+        description: Mean gap to the field median over the stint's clean laps. Negative = quicker than the field.
+        data_tests:
+          - not_null

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -18,6 +19,7 @@ except Exception as e:
 
 races, drivers, results = D["races"], D["drivers"], D["results"]
 laps, pits, stints = D["laps"], D["pit_stops"], D["stints"]
+tyres = D["tyres"]
 done_check = races.session_key.isin(results.session_key)
 if races.empty or not done_check.any():
     st.info("Aucun Grand Prix couru pour cette saison. Lance le pipeline puis clique sur « Rafraîchir les données ».")
@@ -71,7 +73,8 @@ if is_demo():
     st.markdown('<div class="demo">Mode démo : données fictives. Ajoute tes credentials BigQuery '
                 '(voir README) pour afficher tes vraies données.</div>', unsafe_allow_html=True)
 
-tab_champ, tab_race, tab_duel = st.tabs(["Championnat", "Course", "Duel"])
+tab_champ, tab_race, tab_tyres, tab_duel = st.tabs(
+    ["Championnat", "Course", "Pneus", "Duel"])
 
 # ---------- Classement ----------
 # Grand Prix + Sprints, rattachés à la manche du week-end
@@ -85,6 +88,8 @@ standings = (res.groupby("driver_number", as_index=False).points.sum()
              .reset_index(drop=True))
 standings["pos"] = standings.index + 1
 order = standings.driver_number.tolist()
+# Libellés de course, partagés par plusieurs onglets
+labels = {r.session_key: f"Manche {r.round} : {r.meeting_name}" for r in done.itertuples()}
 
 with tab_champ:
     lead, second = standings.iloc[0], standings.iloc[1]
@@ -140,7 +145,6 @@ with tab_champ:
 
 # ---------- Course ----------
 with tab_race:
-    labels = {r.session_key: f"Manche {r.round} : {r.meeting_name}" for r in done.itertuples()}
     sk = st.selectbox("Course", list(labels)[::-1], format_func=labels.get)
     rr = results[results.session_key == sk].sort_values("position")
     podium = rr.driver_number.head(3).tolist()
@@ -210,6 +214,114 @@ with tab_race:
             fig.update_layout(xaxis=dict(range=[0, ps.stop_duration.max() * 1.15], visible=False),
                               yaxis=dict(showgrid=False))
             chart(fig, 30 * len(ps) + 40)
+
+# ---------- Pneus ----------
+# La pente vient de dbt (fact_stint_degradation). Deux mesures : la brute, biaisée
+# par l'allègement en carburant, et celle relative au peloton, qui l'annule.
+with tab_tyres:
+    if tyres.empty:
+        st.info("Pas encore de données de dégradation : lance `dbt run` pour créer "
+                "`marts.fact_stint_degradation`.")
+    else:
+        t_labels = {k: v for k, v in labels.items() if k in set(tyres.session_key)}
+        skt = st.selectbox("Grand Prix", list(t_labels)[::-1], format_func=t_labels.get,
+                           key="tyre_race")
+        rac = tyres[(tyres.session_key == skt) & tyres.relative_degradation_s_per_lap.notna()]
+
+        if rac.empty:
+            st.caption("Aucun relais assez long pour estimer une pente sur cette course.")
+        else:
+            w = rac.nlargest(1, "relative_degradation_s_per_lap").iloc[0]
+            st.markdown(
+                f'<p class="headline">Le relais qui s’est le plus dégradé : '
+                f'<b>{name(int(w.driver_number))}</b> en {str(w.compound).title()}, '
+                f'{w.relative_degradation_s_per_lap:+.3f} s par tour sur '
+                f'{int(w.clean_laps)} tours propres, par rapport au peloton.</p>',
+                unsafe_allow_html=True)
+
+        # Jointure par intervalle, côté pandas cette fois : les tours portent un
+        # numéro, les relais une plage.
+        lp = laps[laps.session_key == skt]
+        stn = stints[stints.session_key == skt]
+        # Mêmes tours propres que le mart dbt : un Safety Car ralentit tout le
+        # peloton sur le même tour, donc on le repère en travers des pilotes.
+        field = lp.groupby("lap_number").lap_duration.median()
+        green = field[field <= lp.lap_duration.median() * 1.15].index
+        lp = lp[lp.lap_number.isin(green)]
+        m = lp.merge(stn, on=["session_key", "driver_number"])
+        m = m[m.lap_number.between(m.lap_start, m.lap_end - 1) & (m.lap_number > 1)
+              & (~m.is_pit_out_lap.fillna(False).astype(bool))]
+        if not m.empty:
+            m = m.assign(age=m.lap_number - m.lap_start,
+                         rel=m.lap_duration - m.lap_number.map(field),
+                         comp=m.compound.astype(str).str.upper())
+            keep = m.groupby(["driver_number", "stint_number"]).lap_duration.transform("median") * 1.07
+            m = m[m.lap_duration <= keep].dropna(subset=["rel"])
+
+        st.markdown('<div class="section-title">Le pneu se dégrade-t-il ?</div>'
+                    '<div class="note">Écart au peloton sur le même tour, selon l’âge du pneu. '
+                    'Comparer au peloton annule l’allègement en carburant et l’évolution de la piste, '
+                    'communs à tout le monde au même instant.</div>', unsafe_allow_html=True)
+        if m.empty:
+            st.caption("Pas assez de tours propres sur cette course.")
+        else:
+            fig = go.Figure()
+            for comp, g in m.groupby("comp"):
+                col = T.TYRES.get(comp, T.MUTED)
+                fig.add_scatter(x=g.age, y=g.rel, mode="markers", name=comp.title(),
+                                marker=dict(color=col, size=5, opacity=0.35),
+                                hovertemplate=f"{comp.title()} : %{{y:+.2f}} s à %{{x}} tours<extra></extra>")
+                if len(g) >= 8 and g.age.nunique() > 1:
+                    a, b = np.polyfit(g.age, g.rel, 1)
+                    xs = np.array([g.age.min(), g.age.max()])
+                    fig.add_scatter(x=xs, y=a * xs + b, mode="lines", showlegend=False,
+                                    line=dict(color=col, width=3),
+                                    hovertemplate=f"{comp.title()} : {a:+.3f} s/tour<extra></extra>")
+            # Quelques tours restent très loin du peloton (pluie, tête-à-queue).
+            # On cadre sur 98 % des points pour voir la pente, et on l'écrit.
+            lo, hi = m.rel.quantile([0.01, 0.99])
+            pad = max((hi - lo) * 0.1, 0.3)
+            hidden = int((m.rel < lo).sum() + (m.rel > hi).sum())
+            fig.update_layout(xaxis_title="Âge du pneu (tours)",
+                              yaxis=dict(title="Écart au peloton (s)", range=[lo - pad, hi + pad]),
+                              legend=dict(orientation="h", y=1.08, x=0))
+            chart(fig, 420)
+            if hidden:
+                st.markdown(f'<div class="note">Échelle cadrée sur 98 % des tours : '
+                            f'{hidden} tour(s) hors cadre, trop loin du peloton pour être lisibles '
+                            f'(pluie, tête-à-queue). Ils restent dans le calcul des pentes.</div>',
+                            unsafe_allow_html=True)
+
+        st.markdown('<div class="section-title">Sur la saison, par composé</div>'
+                    '<div class="note">Chaque point est un relais. Les boîtes se recouvrent largement : '
+                    'l’écart entre composés n’est pas tranché par ces données, et une moyenne seule '
+                    'le laisserait croire.</div>', unsafe_allow_html=True)
+        sea = tyres[tyres.relative_degradation_s_per_lap.notna()]
+        if sea.empty:
+            st.caption("Pas encore de relais mesurable cette saison.")
+        else:
+            fig = go.Figure()
+            for comp in [c for c in ("SOFT", "MEDIUM", "HARD", "INTERMEDIATE", "WET")
+                         if c in set(sea.compound)]:
+                g = sea[sea.compound == comp]
+                fig.add_box(x=g.relative_degradation_s_per_lap, name=comp.title(),
+                            marker=dict(color=T.TYRES.get(comp, T.MUTED), size=4, opacity=0.5),
+                            line=dict(color=T.TYRES.get(comp, T.MUTED)),
+                            fillcolor="rgba(0,0,0,0)", boxpoints="all", jitter=0.5, pointpos=0,
+                            hovertemplate="%{x:+.3f} s/tour<extra></extra>")
+            fig.update_layout(showlegend=False,
+                              xaxis=dict(title="Dégradation relative (s/tour)", zeroline=True,
+                                         zerolinecolor=T.MUTED),
+                              yaxis=dict(showgrid=False))
+            chart(fig, 90 * sea.compound.nunique() + 80)
+
+        st.markdown(
+            '<div class="note">La pente <b>brute</b> est aussi dans le mart, et elle vaut à peu près '
+            'zéro : une F1 s’allège d’environ 1,7 kg par tour, ce qui la fait gagner ~0,05 s — soit '
+            'autant que le pneu en perd. Les deux effets s’annulent, et le chiffre brut ne mesure '
+            'presque rien. C’est pourquoi tout ce qui est affiché ici est relatif au peloton.</div>',
+            unsafe_allow_html=True)
+
 
 # ---------- Duel ----------
 with tab_duel:
