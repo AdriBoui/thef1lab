@@ -103,3 +103,10 @@ class OpenF1Client:
 
     def session_result(self, session_key: int) -> list[dict]:
         return self._get("session_result", {"session_key": session_key})
+
+    def starting_grid(self, session_key: int) -> list[dict]:
+        """Grid of the race that follows a qualifying session, penalties applied.
+
+        OpenF1 keys it by the QUALIFYING session (Qualifying -> Grand Prix grid,
+        Sprint Qualifying -> Sprint grid)."""
+        return self._get("starting_grid", {"session_key": session_key})
