@@ -98,4 +98,10 @@ def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         t[k] = t[k][t[k].driver_number.isin(known)]
     s = t["stints"]
     t["stints"] = s.dropna(subset=["lap_start", "lap_end"])
+    cd = t["conditions"].copy()
+    for col in ("lap_duration", "air_temperature", "track_temperature", "humidity"):
+        cd[col] = pd.to_numeric(cd[col], errors="coerce")  # NULL piste = capteur absent
+    for col in ("is_wet", "under_safety_car", "is_outlier_lap"):
+        cd[col] = cd[col].fillna(False).astype(bool)
+    t["conditions"] = cd[cd.driver_number.isin(known)]
     return t
