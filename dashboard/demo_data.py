@@ -92,13 +92,31 @@ def generate(season: int = 2026) -> dict[str, pd.DataFrame]:
                                 SPRINT_POINTS[pos - 1] if pos <= 8 else 0, False))
 
     cols = __import__("queries").CONTRACT
+    # Grille fictive : qualif ≈ arrivée bruitée, et quelques pénalités de grille
+    grid = []
+    for sk in {r[0] for r in results if r[2] == "Race"}:
+        finish = {r[3]: r[4] for r in results if r[0] == sk and r[2] == "Race"}
+        quali = sorted(finish, key=lambda n: finish[n] + rng.normal(0, 3))
+        penalised = set(rng.choice(quali, 2, replace=False))
+        starting = [n for n in quali if n not in penalised] + sorted(penalised, key=quali.index)
+        for n in finish:
+            q, g = quali.index(n) + 1, starting.index(n) + 1
+            grid.append((sk, n, q, g, finish[n], g - q, g - finish[n]))
+    results = pd.DataFrame(results, columns=cols["results"])
+    # Même calcul que mart_constructor_standings (en démo, personne ne change d'équipe)
+    constructors = (results.merge(drivers[["driver_number", "team_name", "team_colour"]], on="driver_number")
+                    .groupby(["team_name", "team_colour", "meeting_key"], as_index=False).points.sum()
+                    .sort_values("meeting_key"))
+    constructors["cumulative_points"] = constructors.groupby("team_name").points.cumsum()
     lp = pd.DataFrame(laps, columns=cols["laps"])
     stn = pd.DataFrame(stints, columns=cols["stints"])
     return {
         "tyres": _degradation(lp, stn, cols["tyres"]),
+        "grid": pd.DataFrame(grid, columns=cols["grid"]),
         "races": pd.DataFrame(races, columns=cols["races"]),
         "drivers": drivers,
-        "results": pd.DataFrame(results, columns=cols["results"]),
+        "results": results,
+        "constructors": constructors[cols["constructors"]],
         "laps": lp,
         "pit_stops": pd.DataFrame(pits, columns=cols["pit_stops"]),
         "stints": stn,

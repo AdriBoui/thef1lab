@@ -17,3 +17,7 @@ sources:
       - name: raw_race_control
       - name: raw_weather
       - name: raw_session_result
+      - name: raw_starting_grid
+        description: >
+          Race starting grid (penalties applied), keyed by the QUALIFYING
+          session that sets it: Qualifying -> Grand Prix, Sprint Qualifying -> Sprint.

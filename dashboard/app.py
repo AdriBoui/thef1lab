@@ -20,6 +20,8 @@ except Exception as e:
 races, drivers, results = D["races"], D["drivers"], D["results"]
 laps, pits, stints = D["laps"], D["pit_stops"], D["stints"]
 tyres = D["tyres"]
+grid = D["grid"]
+constructors = D["constructors"]
 done_check = races.session_key.isin(results.session_key)
 if races.empty or not done_check.any():
     st.info("Aucun Grand Prix couru pour cette saison. Lance le pipeline puis clique sur « Rafraîchir les données ».")
@@ -73,8 +75,8 @@ if is_demo():
     st.markdown('<div class="demo">Mode démo : données fictives. Ajoute tes credentials BigQuery '
                 '(voir README) pour afficher tes vraies données.</div>', unsafe_allow_html=True)
 
-tab_champ, tab_race, tab_tyres, tab_duel = st.tabs(
-    ["Championnat", "Course", "Pneus", "Duel"])
+tab_champ, tab_race, tab_grid, tab_tyres, tab_duel = st.tabs(
+    ["Championnat", "Course", "Grille → arrivée", "Pneus", "Duel"])
 
 # ---------- Classement ----------
 # Grand Prix + Sprints, rattachés à la manche du week-end
@@ -133,15 +135,47 @@ with tab_champ:
                           hovermode="closest")
         chart(fig, 430)
 
-        st.markdown('<div class="section-title">Constructeurs</div>', unsafe_allow_html=True)
-        teams = (res.merge(drivers, on="driver_number").groupby(["team_name", "team_colour"], as_index=False)
-                 .points.sum().sort_values("points"))
-        fig = go.Figure(go.Bar(x=teams.points, y=teams.team_name, orientation="h",
-                               marker_color=teams.team_colour, text=teams.points.astype(int),
-                               textposition="outside", cliponaxis=False,
-                               hovertemplate="%{y} : %{x:.0f} pts<extra></extra>"))
-        fig.update_layout(xaxis=dict(showgrid=False, visible=False), yaxis=dict(showgrid=False))
-        chart(fig, 34 * len(teams) + 30)
+    # ---------- Constructeurs ----------
+    # Calculé dans dbt (mart_constructor_standings) avec l'équipe du pilote au
+    # moment de chaque course : un transfert en cours de saison est bien attribué.
+    cons = constructors.merge(races[["meeting_key", "round"]], on="meeting_key")
+    team_tot = (cons.groupby(["team_name", "team_colour"], as_index=False).points.sum()
+                .sort_values("points", ascending=False).reset_index(drop=True))
+    if len(team_tot) >= 2:
+        t1, t2 = team_tot.iloc[0], team_tot.iloc[1]
+        tgap = int(t1.points - t2.points)
+        st.markdown('<div class="section-title">Championnat constructeurs</div>'
+                    f'<p class="headline"><b>{t1.team_name}</b> mène avec {tgap} point{"s" if tgap != 1 else ""} '
+                    f'd’avance sur {t2.team_name}.</p>', unsafe_allow_html=True)
+
+        c_left, c_right = st.columns([5, 7], gap="large")
+        with c_left:
+            bars = team_tot.sort_values("points")
+            fig = go.Figure(go.Bar(x=bars.points, y=bars.team_name, orientation="h",
+                                   marker_color=bars.team_colour, text=bars.points.astype(int),
+                                   textposition="outside", cliponaxis=False,
+                                   hovertemplate="%{y} : %{x:.0f} pts<extra></extra>"))
+            fig.update_layout(xaxis=dict(showgrid=False, visible=False), yaxis=dict(showgrid=False),
+                              margin=dict(r=40))
+            chart(fig, 34 * len(bars) + 30)
+
+        with c_right:
+            st.markdown('<div class="note">Points cumulés par équipe, Grand Prix et Sprints inclus.</div>',
+                        unsafe_allow_html=True)
+            evo = (cons.pivot_table(index="round", columns="team_name", values="cumulative_points",
+                                    aggfunc="max").sort_index().ffill().fillna(0))
+            team_colour = dict(zip(team_tot.team_name, team_tot.team_colour))
+            fig = go.Figure()
+            for team in reversed(team_tot.team_name.tolist()):
+                fig.add_scatter(x=evo.index, y=evo[team], name=team, mode="lines",
+                                line=dict(color=team_colour[team], width=2.4),
+                                hovertemplate=f"{team} : %{{y:.0f}} pts<extra>Manche %{{x}}</extra>")
+            # 11 équipes : légende ancrée sous l'axe, avec une marge basse dédiée
+            fig.update_layout(xaxis_title="Manche", yaxis_title=None,
+                              legend=dict(orientation="h", yanchor="top", y=-0.22, x=0,
+                                          traceorder="reversed"),
+                              margin=dict(b=130), hovermode="closest")
+            chart(fig, 520)
 
 # ---------- Course ----------
 with tab_race:
@@ -215,6 +249,81 @@ with tab_race:
                               yaxis=dict(showgrid=False))
             chart(fig, 30 * len(ps) + 40)
 
+# ---------- Grille → arrivée ----------
+# La grille vient de dbt (fact_grid_vs_result) : pénalités incluses, ce n'est
+# pas le classement des qualifs.
+with tab_grid:
+    g_labels = {k: v for k, v in labels.items() if k in set(grid.session_key)}
+    if not g_labels:
+        st.info("Pas encore de grille de départ : relance l'ingestion puis `dbt run`.")
+    else:
+        skg = st.selectbox("Grand Prix", list(g_labels)[::-1], format_func=g_labels.get, key="grid_race")
+        gr = grid[grid.session_key == skg].sort_values("grid_position", na_position="last")
+        classified = gr.dropna(subset=["positions_gained"])
+        penalised = gr[gr.grid_penalty_places > 0]
+        if not classified.empty:
+            best = classified.loc[classified.positions_gained.idxmax()]
+            pen_txt = (f" {len(penalised)} pilote{'s' if len(penalised) > 1 else ''} "
+                       f"{'sont partis' if len(penalised) > 1 else 'est parti'} plus loin que "
+                       "leur place en qualif (pénalités)." if len(penalised) else "")
+            st.markdown(f'<p class="headline"><b>{name(best.driver_number)}</b> a gagné '
+                        f'{int(best.positions_gained)} places, de P{int(best.grid_position)} '
+                        f'à P{int(best.finish_position)}.{pen_txt}</p>', unsafe_allow_html=True)
+
+        st.markdown('<div class="section-title">De la grille à l’arrivée</div>'
+                    '<div class="note">Rond : place sur la grille. Losange : arrivée (vert = places gagnées). '
+                    'Rond creux : place en qualif, quand une pénalité a fait reculer le pilote.</div>',
+                    unsafe_allow_html=True)
+        fig = go.Figure()
+        for r in gr.itertuples():
+            y = code(r.driver_number)
+            if pd.notna(r.qualifying_position) and pd.notna(r.grid_position) and r.grid_penalty_places > 0:
+                fig.add_scatter(x=[r.qualifying_position, r.grid_position], y=[y, y], mode="lines",
+                                line=dict(color=T.MUTED, width=1, dash="dot"), showlegend=False, hoverinfo="skip")
+                fig.add_scatter(x=[r.qualifying_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(color="rgba(0,0,0,0)", size=10, line=dict(color=T.MUTED, width=2)),
+                                hovertemplate=f"{y} : P{int(r.qualifying_position)} en qualif, "
+                                              f"{int(r.grid_penalty_places)} place(s) de pénalité<extra></extra>")
+            if pd.notna(r.finish_position) and pd.notna(r.grid_position):
+                gain = r.positions_gained
+                c = T.GREEN if gain > 0 else T.LOSS if gain < 0 else T.MUTED
+                fig.add_scatter(x=[r.grid_position, r.finish_position], y=[y, y], mode="lines",
+                                line=dict(color=c, width=3), showlegend=False, hoverinfo="skip")
+                fig.add_scatter(x=[r.finish_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(symbol="diamond", color=c, size=11, line=dict(color=T.TARMAC, width=1)),
+                                hovertemplate=f"{y} : P{int(r.grid_position)} → P{int(r.finish_position)} "
+                                              f"({int(gain):+d})<extra></extra>")
+            if pd.notna(r.grid_position):
+                fig.add_scatter(x=[r.grid_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(color=colour(r.driver_number), size=11, line=dict(color=T.TARMAC, width=2)),
+                                hovertemplate=f"{y} : départ P{int(r.grid_position)}"
+                                              f"{'' if pd.notna(r.finish_position) else ', non classé'}<extra></extra>")
+        n_pos = int(max(gr[["qualifying_position", "grid_position", "finish_position"]].max().max(), len(gr)))
+        fig.update_layout(xaxis=dict(title="Position (vers la droite = places gagnées)", autorange="reversed",
+                                     dtick=1, range=[n_pos + 0.5, 0.5]),
+                          yaxis=dict(autorange="reversed", showgrid=False,
+                                     categoryorder="array", categoryarray=[code(n) for n in gr.driver_number]))
+        chart(fig, 24 * len(gr) + 70)
+
+        st.markdown('<div class="section-title">Sur la saison : qui remonte le plus ?</div>'
+                    '<div class="note">Moyenne des places gagnées par Grand Prix, depuis la vraie grille. '
+                    'Arrivées classées uniquement, au moins 3 courses.</div>', unsafe_allow_html=True)
+        season_gain = (grid.dropna(subset=["positions_gained"]).groupby("driver_number")
+                       .agg(avg=("positions_gained", "mean"), races=("positions_gained", "size"))
+                       .reset_index())
+        penalties = grid[grid.grid_penalty_places > 0].groupby("driver_number").size()
+        season_gain["penalties"] = season_gain.driver_number.map(penalties).fillna(0).astype(int)
+        season_gain = season_gain[season_gain.races >= 3].sort_values("avg")
+        fig = go.Figure(go.Bar(
+            x=season_gain["avg"], y=[code(n) for n in season_gain.driver_number], orientation="h",
+            marker_color=[T.GREEN if v > 0 else T.LOSS for v in season_gain["avg"]],
+            text=season_gain["avg"].map("{:+.1f}".format), textposition="outside", cliponaxis=False,
+            customdata=season_gain[["races", "penalties"]],
+            hovertemplate="%{y} : %{x:+.2f} places par course<br>%{customdata[0]} courses classées, "
+                          "%{customdata[1]} pénalité(s) de grille<extra></extra>"))
+        fig.update_layout(xaxis=dict(zeroline=True, zerolinecolor=T.MUTED, title="Places gagnées en moyenne"),
+                          yaxis=dict(showgrid=False), margin=dict(l=10, r=50))
+        chart(fig, 22 * len(season_gain) + 70)
 # ---------- Pneus ----------
 # La pente vient de dbt (fact_stint_degradation). Deux mesures : la brute, biaisée
 # par l'allègement en carburant, et celle relative au peloton, qui l'annule.
