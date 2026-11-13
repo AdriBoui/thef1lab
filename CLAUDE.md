@@ -66,34 +66,61 @@ The user is learning Data Engineering through this project. In every session:
 - Prefer letting the user type commands and code themselves when it helps them learn; explain
   errors rather than silently fixing them.
 
-## Status — 31 October 2026
+## Status — 12 November 2026
 
 The repo is on GitHub (`AdriBoui/thef1lab`, branch `main`). PR #1 (`feat/dashboard`) is merged: a
 Streamlit dashboard (`dashboard/`), the sprint-points fix and `fact_stints`. The Actions workflow
 exists but its cron is **disabled** — it is `workflow_dispatch` only until the GCP secrets are set.
-
-The local folder was recreated from GitHub, so the **local secrets are gone**: no `.env`, no
-`credentials/` key. `~/.dbt/profiles.yml` still points its `keyfile` at the old, deleted path
-(`~/Documents/thef1lab/credentials/…`). The `.venv` has the dashboard deps but **not dbt**.
 `docs/guide-looker.md` (Looker Studio) is still valid as an alternative to Streamlit.
+
+**Local setup is working again** (steps 1–2 done):
+
+- Secrets restored: `.env` (copied from `.env.example`, defaults unchanged) and
+  `credentials/thef1lab-service-account.json` (`f1-pipeline` key `be7f8a1c…`, created 11 Nov;
+  every older key was revoked). `~/.dbt/profiles.yml` points its `keyfile` at that file.
+- `.venv` was recreated with **Python 3.11** via `uv` (matches CI) and holds `requirements.txt` +
+  `dashboard/requirements.txt`, so dbt 1.8.8 is installed.
+- BigQuery: `raw_openf1` → `staging` → `marts`, all in EU, built from a full season ingestion
+  (~107k rows, ~21 MB). The old `raw` dataset was deleted on 12 Nov.
+- A full-season ingestion takes **~37 min** (OpenF1 rate limit, 30 req/min). Run it in the user's
+  Terminal tab, not as a background Bash job, which dies when the session ends.
+- Branch `fix/stg-session-result-typing` (PR to open/merge): OpenF1 returned `position = 'RT'`, so
+  schema autodetect typed the raw column as STRING; staging now casts it to INT64.
+
+Known open points:
+
+- 2 dbt `relationships` warnings: a few `fact_stints` / `fact_pit_stops` driver numbers are missing
+  from `dim_driver` (probably reserve drivers) — not investigated yet.
+- `raw_pit` dropped from 6.9k to 1.8k rows between September and November: OpenF1 now returns far
+  fewer practice/qualifying pit entries. Race pit stops are consistent.
 
 Roadmap agreed with the user (one branch + PR per step):
 
-1. Recreate `.env` and the service-account key — secrets management, GCP IAM
-2. Run the pipeline locally (ingestion, `dbt seed`, `dbt run`, `dbt test`)
+1. ~~Recreate `.env` and the service-account key~~ — done 11 Nov
+2. ~~Run the pipeline locally~~ — done 12 Nov
 3. Point the dashboard at the real data
 4. Add the user's own views / charts (Streamlit, Plotly, analytical SQL)
 5. Publish on Streamlit Community Cloud (read-only `f1-dashboard` service account)
 6. Re-enable the GitHub Actions cron
+
+Agreed follow-ups (own branch each, after the full-refresh baseline):
+
+- **Incremental ingestion** by meeting: high watermark read from `raw_meetings` in BigQuery (no
+  local state — CI runners are stateless), re-fetch the last meeting as a lookback, delete+insert
+  per meeting to stay idempotent, keep a `--full-refresh` flag. Cuts a weekly run from ~37 min to
+  ~2 min. This replaces the "full refresh" design choice above — update it and the README then.
+- **Explicit raw schemas** instead of `autodetect=True` (a first data contract).
+- **Workload Identity Federation** for GitHub Actions at step 6, so CI needs no JSON key.
 
 Older notes and open items also live in Notion:
 https://app.notion.com/p/3b2d8cfcd53981fe9718cb47cee0f8a9
 
 ### Costs — already verified, no need to recompute
 
-- Weekly cron (~120 min/month): free on a private repo (2 000 free minutes/month) and on a public
-  one (unlimited). Public is **not** required for it to be free — it matters for the portfolio.
-- OpenF1 is free; BigQuery holds ~10.7 MB against 10 GB free, and queries stay far under the
+- Weekly cron (~170 min/month at the measured ~37 min/run + dbt): free on a private repo
+  (2 000 free minutes/month) and on a public one (unlimited). Public is **not** required for it to
+  be free — it matters for the portfolio.
+- OpenF1 is free; BigQuery holds ~21 MB of raw data against 10 GB free, and queries stay far under the
   1 TB/month free tier.
 - Once on GitHub the cron runs on GitHub's runners — the Mac does not need to be on.
 - dbt Cloud: set aside for now, worth revisiting later.
