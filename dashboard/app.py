@@ -19,6 +19,7 @@ except Exception as e:
 
 races, drivers, results = D["races"], D["drivers"], D["results"]
 laps, pits, stints = D["laps"], D["pit_stops"], D["stints"]
+cond = D["conditions"]
 tyres = D["tyres"]
 grid = D["grid"]
 constructors = D["constructors"]
@@ -50,6 +51,21 @@ def second_driver_of_team(numbers):
     return dashed
 
 
+def _runs(df, col):
+    """Plages de tours contiguës où col est vrai (pour ombrer le graphique)."""
+    out, start = [], None
+    for lap, on in zip(df.lap_number, df[col]):
+        if on and start is None:
+            start = lap
+        elif not on and start is not None:
+            out.append((start, prev))
+            start = None
+        prev = lap
+    if start is not None:
+        out.append((start, prev))
+    return out
+
+
 def chart(fig, height=380):
     fig.update_layout(height=height)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
@@ -75,8 +91,8 @@ if is_demo():
     st.markdown('<div class="demo">Mode démo : données fictives. Ajoute tes credentials BigQuery '
                 '(voir README) pour afficher tes vraies données.</div>', unsafe_allow_html=True)
 
-tab_champ, tab_race, tab_grid, tab_tyres, tab_duel = st.tabs(
-    ["Championnat", "Course", "Grille → arrivée", "Pneus", "Duel"])
+tab_champ, tab_race, tab_grid, tab_tyres, tab_cond, tab_duel = st.tabs(
+    ["Championnat", "Course", "Grille → arrivée", "Pneus", "Conditions", "Duel"])
 
 # ---------- Classement ----------
 # Grand Prix + Sprints, rattachés à la manche du week-end
@@ -430,6 +446,109 @@ with tab_tyres:
             'autant que le pneu en perd. Les deux effets s’annulent, et le chiffre brut ne mesure '
             'presque rien. C’est pourquoi tout ce qui est affiché ici est relatif au peloton.</div>',
             unsafe_allow_html=True)
+
+# ---------- Conditions ----------
+# Météo rattachée au tour par jointure as-of, Safety Car reconstitué depuis le
+# journal des commissaires — les deux viennent de dbt (fact_lap_conditions).
+with tab_cond:
+    if cond.empty:
+        st.info("Pas encore de conditions de course : lance `dbt run` pour créer "
+                "`marts.fact_lap_conditions`.")
+    else:
+        c_labels = {k: v for k, v in labels.items() if k in set(cond.session_key)}
+        skc = st.selectbox("Grand Prix", list(c_labels)[::-1], format_func=c_labels.get,
+                           key="cond_race")
+        rc = cond[cond.session_key == skc]
+
+        green = rc[~rc.under_safety_car & ~rc.is_outlier_lap]
+        # Compter des TOURS, pas des lignes : une ligne est un couple pilote-tour,
+        # donc sommer les booléens multiplierait tout par le nombre de pilotes.
+        wet_n = green.loc[green.is_wet, "lap_number"].nunique()
+        sc_n = rc.loc[rc.under_safety_car, "lap_number"].nunique()
+        bits = []
+        if sc_n:
+            bits.append(f"<b>{sc_n} tours neutralisés</b> par un Safety Car ou un VSC")
+        if wet_n:
+            bits.append(f"<b>{wet_n} tours sous la pluie</b>")
+        tmax = rc.track_temperature.max()
+        piste = f"piste jusqu’à {tmax:.0f} °C" if pd.notna(tmax) else "température de piste indisponible"
+        phrase = ", ".join(bits + [piste])
+        st.markdown(f'<p class="headline">{phrase[0].upper() + phrase[1:]}.</p>',
+                    unsafe_allow_html=True)
+
+        # Rythme du peloton tour par tour, avec les périodes marquées
+        st.markdown('<div class="section-title">La course, tour par tour</div>'
+                    '<div class="note">Temps médian du peloton. Les bandes grises sont les '
+                    'périodes neutralisées, les bandes bleues la pluie.</div>',
+                    unsafe_allow_html=True)
+        # Les tours aberrants (suspension au drapeau rouge) ne sont pas des temps
+        # au tour : un seul écrase l'échelle du graphique.
+        per_lap = (rc[~rc.is_outlier_lap].groupby("lap_number")
+                     .agg(median=("lap_duration", "median"),
+                          track=("track_temperature", "median"),
+                          wet=("is_wet", "max"), sc=("under_safety_car", "max"))
+                     .reset_index().sort_values("lap_number"))
+        if per_lap.empty:
+            st.caption("Pas de tour chronométré pour cette course.")
+        else:
+            fig = go.Figure()
+            for col, colour_, label in ((("sc"), "rgba(139,147,161,0.22)", "Neutralisé"),
+                                        (("wet"), "rgba(0,103,173,0.30)", "Pluie")):
+                for a, b in _runs(per_lap, col):
+                    fig.add_vrect(x0=a - 0.5, x1=b + 0.5, fillcolor=colour_,
+                                  line_width=0, layer="below")
+            fig.add_scatter(x=per_lap.lap_number, y=per_lap["median"], mode="lines",
+                            line=dict(color=T.TEXT, width=2), name="Rythme médian",
+                            hovertemplate="Tour %{x} : %{y:.2f} s<extra></extra>")
+            fig.add_scatter(x=per_lap.lap_number, y=per_lap.track, mode="lines", yaxis="y2",
+                            line=dict(color=T.PURPLE, width=2, dash="dot"),
+                            name="Température piste",
+                            hovertemplate="Tour %{x} : %{y:.1f} °C<extra></extra>")
+            fig.update_layout(xaxis_title="Tour",
+                              yaxis=dict(title="Temps au tour (s)"),
+                              yaxis2=dict(title="Piste (°C)", overlaying="y", side="right",
+                                          showgrid=False),
+                              legend=dict(orientation="h", y=1.1, x=0))
+            chart(fig, 400)
+
+        # Le coût de la pluie, comparé DANS la même course : le circuit est neutralisé.
+        st.markdown('<div class="section-title">Ce que coûte la pluie</div>'
+                    '<div class="note">Temps médian d’un tour mouillé face à un tour sec, '
+                    'dans la même course et hors tours neutralisés. Comparer à l’intérieur '
+                    'd’une course évite de comparer Monaco à Spa.</div>',
+                    unsafe_allow_html=True)
+        g = cond[~cond.under_safety_car & ~cond.is_outlier_lap]
+        comp = (g.groupby(["session_key", "is_wet"]).lap_duration.median().unstack()
+                 .rename(columns={True: "pluie", False: "sec"}))
+        comp["tours_pluie"] = g[g.is_wet].groupby("session_key").size()
+        comp = comp.dropna(subset=["pluie", "sec"])
+        if comp.empty:
+            st.caption("Aucune course n’a eu à la fois des tours mouillés et des tours secs.")
+        else:
+            comp = comp.assign(cout=comp.pluie - comp.sec).sort_values("cout")
+            fig = go.Figure(go.Bar(
+                # La taille d'échantillon va sur l'étiquette, pas dans l'infobulle :
+                # une barre bâtie sur 11 tours ne doit pas peser comme une barre
+                # bâtie sur 150.
+                x=comp.cout,
+                y=[f"{labels.get(k, k)} — {int(n)} tours-pilotes" for k, n in
+                   zip(comp.index, comp.tours_pluie)],
+                orientation="h",
+                marker_color=T.TYRES["INTERMEDIATE"],
+                text=comp.cout.map("+{:.1f} s".format), textposition="outside", cliponaxis=False,
+                customdata=comp[["tours_pluie"]],
+                hovertemplate="%{x:+.2f} s par tour<br>%{customdata[0]:.0f} tours-pilotes sous la pluie"
+                              "<extra></extra>"))
+            fig.update_layout(xaxis=dict(title="Secondes perdues par tour",
+                                         range=[0, comp.cout.max() * 1.25]),
+                              yaxis=dict(showgrid=False))
+            chart(fig, 70 * len(comp) + 90)
+            st.markdown(
+                f'<div class="note">Seulement <b>{len(comp)} course(s)</b> ont connu les deux '
+                'régimes : la pluie de la saison est tombée hors des courses ou les a couvertes '
+                'entièrement. L’écart ci-dessus est une estimation sur petit échantillon, et le '
+                'drapeau de pluie d’OpenF1 est binaire — il ne dit rien de l’intensité.</div>',
+                unsafe_allow_html=True)
 
 
 # ---------- Duel ----------
