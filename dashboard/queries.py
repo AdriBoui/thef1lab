@@ -21,6 +21,10 @@ CONTRACT = {
     "pit_stops": ["session_key", "driver_number", "lap_number", "stop_duration"],
     "stints":    ["session_key", "driver_number", "stint_number",
                   "compound", "lap_start", "lap_end"],
+    # Un tour de course par ligne, avec les conditions du moment (voir dbt)
+    "conditions": ["session_key", "driver_number", "lap_number", "lap_duration",
+                   "air_temperature", "track_temperature", "humidity",
+                   "is_wet", "under_safety_car", "is_outlier_lap"],
 }
 
 QUERIES = {
@@ -77,6 +81,17 @@ QUERIES = {
         select t.session_key, t.driver_number, t.stint_number,
                t.compound, t.lap_start, t.lap_end
         from `{project}.{marts}.fact_stints` t
+        join `{project}.{marts}.dim_session` s using (session_key)
+        where s.session_name = 'Race' and s.year = {season}
+    """,
+
+    # Optionnel. La météo est rattachée au tour par jointure as-of, et les
+    # périodes de Safety Car viennent du journal des commissaires (voir dbt).
+    "conditions": """
+        select c.session_key, c.driver_number, c.lap_number, c.lap_duration,
+               c.air_temperature, c.track_temperature, c.humidity,
+               c.is_wet, c.under_safety_car, c.is_outlier_lap
+        from `{project}.{marts}.fact_lap_conditions` c
         join `{project}.{marts}.dim_session` s using (session_key)
         where s.session_name = 'Race' and s.year = {season}
     """,

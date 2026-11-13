@@ -125,3 +125,46 @@ models:
       - name: median_lap_seconds
         data_tests:
           - not_null
+
+  - name: fact_lap_conditions
+    description: >
+      One row per race lap with the conditions it was run in: weather joined
+      as-of the lap (latest reading within 10 minutes) and whether the lap was
+      neutralised by a safety car or VSC, read from the race-control event log.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: [session_key, driver_number, lap_number]
+    columns:
+      - name: session_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: lap_number
+        data_tests:
+          - not_null
+      - name: track_temperature
+        description: Sensor zeros and sub-5C readings are nulled out as missing, not kept as cold.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 5
+              max_value: 70
+      - name: air_temperature
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 50
+      - name: weather_age_seconds
+        description: How stale the as-of weather reading was. Capped at 600 by construction.
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 600
+      - name: under_safety_car
+        data_tests:
+          - not_null
+      - name: is_outlier_lap
+        description: Lap longer than 3x the session median — a red-flag suspension or timing gap, not a pace measurement.
+        data_tests:
+          - not_null
