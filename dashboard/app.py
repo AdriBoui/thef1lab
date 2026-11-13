@@ -19,6 +19,7 @@ except Exception as e:
 races, drivers, results = D["races"], D["drivers"], D["results"]
 laps, pits, stints = D["laps"], D["pit_stops"], D["stints"]
 grid = D["grid"]
+constructors = D["constructors"]
 done_check = races.session_key.isin(results.session_key)
 if races.empty or not done_check.any():
     st.info("Aucun Grand Prix couru pour cette saison. Lance le pipeline puis clique sur « Rafraîchir les données ».")
@@ -129,15 +130,47 @@ with tab_champ:
                           hovermode="closest")
         chart(fig, 430)
 
-        st.markdown('<div class="section-title">Constructeurs</div>', unsafe_allow_html=True)
-        teams = (res.merge(drivers, on="driver_number").groupby(["team_name", "team_colour"], as_index=False)
-                 .points.sum().sort_values("points"))
-        fig = go.Figure(go.Bar(x=teams.points, y=teams.team_name, orientation="h",
-                               marker_color=teams.team_colour, text=teams.points.astype(int),
-                               textposition="outside", cliponaxis=False,
-                               hovertemplate="%{y} : %{x:.0f} pts<extra></extra>"))
-        fig.update_layout(xaxis=dict(showgrid=False, visible=False), yaxis=dict(showgrid=False))
-        chart(fig, 34 * len(teams) + 30)
+    # ---------- Constructeurs ----------
+    # Calculé dans dbt (mart_constructor_standings) avec l'équipe du pilote au
+    # moment de chaque course : un transfert en cours de saison est bien attribué.
+    cons = constructors.merge(races[["meeting_key", "round"]], on="meeting_key")
+    team_tot = (cons.groupby(["team_name", "team_colour"], as_index=False).points.sum()
+                .sort_values("points", ascending=False).reset_index(drop=True))
+    if len(team_tot) >= 2:
+        t1, t2 = team_tot.iloc[0], team_tot.iloc[1]
+        tgap = int(t1.points - t2.points)
+        st.markdown('<div class="section-title">Championnat constructeurs</div>'
+                    f'<p class="headline"><b>{t1.team_name}</b> mène avec {tgap} point{"s" if tgap != 1 else ""} '
+                    f'd’avance sur {t2.team_name}.</p>', unsafe_allow_html=True)
+
+        c_left, c_right = st.columns([5, 7], gap="large")
+        with c_left:
+            bars = team_tot.sort_values("points")
+            fig = go.Figure(go.Bar(x=bars.points, y=bars.team_name, orientation="h",
+                                   marker_color=bars.team_colour, text=bars.points.astype(int),
+                                   textposition="outside", cliponaxis=False,
+                                   hovertemplate="%{y} : %{x:.0f} pts<extra></extra>"))
+            fig.update_layout(xaxis=dict(showgrid=False, visible=False), yaxis=dict(showgrid=False),
+                              margin=dict(r=40))
+            chart(fig, 34 * len(bars) + 30)
+
+        with c_right:
+            st.markdown('<div class="note">Points cumulés par équipe, Grand Prix et Sprints inclus.</div>',
+                        unsafe_allow_html=True)
+            evo = (cons.pivot_table(index="round", columns="team_name", values="cumulative_points",
+                                    aggfunc="max").sort_index().ffill().fillna(0))
+            team_colour = dict(zip(team_tot.team_name, team_tot.team_colour))
+            fig = go.Figure()
+            for team in reversed(team_tot.team_name.tolist()):
+                fig.add_scatter(x=evo.index, y=evo[team], name=team, mode="lines",
+                                line=dict(color=team_colour[team], width=2.4),
+                                hovertemplate=f"{team} : %{{y:.0f}} pts<extra>Manche %{{x}}</extra>")
+            # 11 équipes : légende ancrée sous l'axe, avec une marge basse dédiée
+            fig.update_layout(xaxis_title="Manche", yaxis_title=None,
+                              legend=dict(orientation="h", yanchor="top", y=-0.22, x=0,
+                                          traceorder="reversed"),
+                              margin=dict(b=130), hovermode="closest")
+            chart(fig, 520)
 
 # ---------- Course ----------
 with tab_race:
