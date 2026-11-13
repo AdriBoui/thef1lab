@@ -92,10 +92,17 @@ def generate(season: int = 2026) -> dict[str, pd.DataFrame]:
                                 SPRINT_POINTS[pos - 1] if pos <= 8 else 0, False))
 
     cols = __import__("queries").CONTRACT
+    results = pd.DataFrame(results, columns=cols["results"])
+    # Même calcul que mart_constructor_standings (en démo, personne ne change d'équipe)
+    constructors = (results.merge(drivers[["driver_number", "team_name", "team_colour"]], on="driver_number")
+                    .groupby(["team_name", "team_colour", "meeting_key"], as_index=False).points.sum()
+                    .sort_values("meeting_key"))
+    constructors["cumulative_points"] = constructors.groupby("team_name").points.cumsum()
     return {
         "races": pd.DataFrame(races, columns=cols["races"]),
         "drivers": drivers,
-        "results": pd.DataFrame(results, columns=cols["results"]),
+        "results": results,
+        "constructors": constructors[cols["constructors"]],
         "laps": pd.DataFrame(laps, columns=cols["laps"]),
         "pit_stops": pd.DataFrame(pits, columns=cols["pit_stops"]),
         "stints": pd.DataFrame(stints, columns=cols["stints"]),
