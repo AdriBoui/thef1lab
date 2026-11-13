@@ -9,6 +9,7 @@ TEXT = "#E9ECF1"
 MUTED = "#8B93A1"
 PURPLE = "#B36BFF"   # meilleur tour / leader
 GREEN = "#2BD46B"    # gain
+LOSS = "#FF6B6B"     # places perdues (distinct du rouge de la marque)
 RED = "#E10600"      # marque, utilisé une seule fois
 FONT = "Titillium Web, Segoe UI, Helvetica, Arial, sans-serif"
 

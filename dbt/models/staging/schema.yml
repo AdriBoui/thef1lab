@@ -77,6 +77,23 @@ models:
         data_tests:
           - not_null
 
+  - name: stg_starting_grid
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - qualifying_session_key
+            - driver_number
+    columns:
+      - name: qualifying_session_key
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_sessions')
+              field: session_key
+      - name: driver_number
+        data_tests:
+          - not_null
+
   - name: stg_session_result
     data_tests:
       - dbt_utils.unique_combination_of_columns:
