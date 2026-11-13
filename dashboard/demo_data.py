@@ -108,13 +108,43 @@ def generate(season: int = 2026) -> dict[str, pd.DataFrame]:
                     .groupby(["team_name", "team_colour", "meeting_key"], as_index=False).points.sum()
                     .sort_values("meeting_key"))
     constructors["cumulative_points"] = constructors.groupby("team_name").points.cumsum()
+    lp = pd.DataFrame(laps, columns=cols["laps"])
+    stn = pd.DataFrame(stints, columns=cols["stints"])
     return {
+        "tyres": _degradation(lp, stn, cols["tyres"]),
         "grid": pd.DataFrame(grid, columns=cols["grid"]),
         "races": pd.DataFrame(races, columns=cols["races"]),
         "drivers": drivers,
         "results": results,
         "constructors": constructors[cols["constructors"]],
-        "laps": pd.DataFrame(laps, columns=cols["laps"]),
+        "laps": lp,
         "pit_stops": pd.DataFrame(pits, columns=cols["pit_stops"]),
-        "stints": pd.DataFrame(stints, columns=cols["stints"]),
+        "stints": stn,
     }
+
+
+def _degradation(lp: pd.DataFrame, stn: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Même recette que le mart dbt : médiane du peloton, puis pente des moindres carrés."""
+    field = lp.groupby(["session_key", "lap_number"]).lap_duration.median().rename("field")
+    lp = lp.join(field, on=["session_key", "lap_number"])
+    rows = []
+    for s in stn.itertuples():
+        w = lp[(lp.session_key == s.session_key) & (lp.driver_number == s.driver_number)
+               & lp.lap_number.between(s.lap_start, s.lap_end - 1)
+               & (lp.lap_number > 1) & (~lp.is_pit_out_lap)]
+        if w.empty:
+            continue
+        med = w.lap_duration.median()
+        w = w[w.lap_duration <= med * 1.07]
+        age, rel = w.lap_number - s.lap_start, w.lap_duration - w.field
+        var = float(np.var(age))
+
+        def slope(y):  # cov(y, âge) / var(âge) — NULL sous 8 tours propres
+            if len(w) < 8 or var == 0:
+                return None
+            return round(float(np.cov(age, y, bias=True)[0, 1] / var), 4)
+
+        rows.append((s.session_key, s.driver_number, s.stint_number, s.compound, len(w),
+                     int(age.min()), int(age.max()), round(float(med), 3),
+                     slope(w.lap_duration), slope(rel), round(float(rel.mean()), 3)))
+    return pd.DataFrame(rows, columns=columns)
