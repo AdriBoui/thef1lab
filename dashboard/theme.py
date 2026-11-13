@@ -1,20 +1,12 @@
-"""Identité visuelle : écran de chronométrage (tarmac, violet = meilleur, vert = progression)."""
+"""Habillage Streamlit : CSS de l'app et gabarit Plotly.
+
+Les couleurs viennent de `palette.py`, partagé avec le générateur de page statique.
+"""
 import plotly.graph_objects as go
 import plotly.io as pio
 
-TARMAC = "#14171D"
-SURFACE = "#1C2129"
-LINE = "#2A303B"
-TEXT = "#E9ECF1"
-MUTED = "#8B93A1"
-PURPLE = "#B36BFF"   # meilleur tour / leader
-GREEN = "#2BD46B"    # gain
-LOSS = "#FF6B6B"     # places perdues (distinct du rouge de la marque)
-RED = "#E10600"      # marque, utilisé une seule fois
-FONT = "Titillium Web, Segoe UI, Helvetica, Arial, sans-serif"
-
-TYRES = {"SOFT": "#E8002D", "MEDIUM": "#FFD12E", "HARD": "#E9ECF1",
-         "INTERMEDIATE": "#43B02A", "WET": "#0067AD"}
+from palette import (TARMAC, SURFACE, LINE, TEXT, MUTED, PURPLE, GREEN, LOSS,
+                     RED, FONT, TYRES)  # noqa: F401  (réexportés : app.py fait T.GREEN, etc.)
 
 CSS = f"""
 <style>
