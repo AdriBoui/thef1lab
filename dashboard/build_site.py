@@ -62,6 +62,22 @@ def hexc(c) -> str:
     return "#" + str(c).lstrip("#").upper() if pd.notna(c) else P.MUTED
 
 
+def tip(title: str, *lines: str) -> str:
+    """Attributs d'infobulle : le titre et le corps, en TEXTE, jamais en HTML.
+
+    Le piège qu'on évite ici : un attribut HTML est décodé par l'analyseur, donc
+    `getAttribute()` rend la valeur d'origine — l'échappement est annulé. La
+    passer à `innerHTML` rouvre la porte à l'injection. Le JS reconstruit donc
+    l'infobulle avec `textContent`, et la mise en forme (gras, retours) vient de
+    la structure, pas des données. `e()` reste nécessaire pour que les guillemets
+    ne cassent pas l'attribut lui-même.
+    """
+    body = "\n".join(str(x) for x in lines if x)
+    # Le saut de ligne est encodé en entité : un retour littéral dans un attribut
+    # dépend du parseur, `&#10;` se décode partout de la même façon.
+    return f'data-t="{e(title)}" data-b="{e(body).replace(chr(10), "&#10;")}"'
+
+
 # ----------------------------------------------------------------------- sections
 def prepare(d):
     """Agrégats communs à plusieurs sections."""
@@ -189,8 +205,8 @@ def constructors(d):
     mx = tot.points.max()
     lead = tot.points.iloc[0]
     rows = "".join(
-        f'''<div class="trow" data-tip="<b>{e(r.team_name)}</b><br>{int(r.points)} points{
-            '' if r.points == lead else f' — {int(lead - r.points)} de retard sur le leader'}">
+        f'''<div class="trow" {tip(r.team_name, f"{int(r.points)} points",
+            "" if r.points == lead else f"{int(lead - r.points)} de retard sur le leader")}>
 <span class="tname">{e(r.team_name)}</span>
 <span class="track"><span class="fill" style="width:{r.points/mx*100:.1f}%;
 background:{hexc(r.colour)}"></span></span>
@@ -226,10 +242,10 @@ def grid_section(ctx, d):
         w = abs(r.avg) / mx * half
         x = mid if r.avg >= 0 else mid - w
         col = P.GREEN if r.avg > 0 else P.LOSS
-        who = e(drv.at[r.driver_number, "full_name"])
+        who = drv.at[r.driver_number, "full_name"]
         sens = "gagnées" if r.avg >= 0 else "perdues"
-        out.append(f'<rect class="hv" data-tip="<b>{who}</b><br>{abs(r.avg):.2f} place(s) {sens} '
-                   f'en moyenne<br>sur {int(r.races)} Grands Prix classés" '
+        out.append(f'<rect class="hv" '
+                   f'{tip(who, f"{abs(r.avg):.2f} place(s) {sens} en moyenne", f"sur {int(r.races)} Grands Prix classés")} '
                    f'x="{x:.1f}" y="{y+4}" width="{w:.1f}" height="{rowh-9}" rx="2" fill="{col}"/>')
         out.append(f'<text x="{L-8}" y="{y+rowh/2+4}" class="ax" text-anchor="end">'
                    f'{e(drv.at[r.driver_number, "name_acronym"])}</text>')
@@ -277,10 +293,9 @@ def tyres_section(ctx, d):
             # Dispersion déterministe : la page doit être identique à chaque génération.
             jit = ((j * 37) % 23 - 11) / 11 * (rowh / 2 - 10)
             num = int(r.driver_number)
-            who = e(drv.at[num, "name_acronym"]) if num in drv.index else num
-            out.append(f'<circle class="pt" data-tip="<b>{who}</b> — {e(comp.title())}<br>'
-                       f'{r.slope:+.3f} s/tour relatif au peloton<br>'
-                       f'relais {int(r.stint_number)}, {int(r.clean_laps)} tours propres" '
+            who = drv.at[num, "name_acronym"] if num in drv.index else num
+            out.append(f'<circle class="pt" '
+                       f'{tip(f"{who} — {comp.title()}", f"{r.slope:+.3f} s/tour relatif au peloton", f"relais {int(r.stint_number)}, {int(r.clean_laps)} tours propres")} '
                        f'cx="{X(r.slope):.1f}" cy="{cy+jit:.1f}" r="2.4" fill="{col}" '
                        f'fill-opacity="0.42"/>')
         med = float(g.slope.median())
@@ -323,10 +338,10 @@ def conditions_section(ctx, d):
     for i, r_ in enumerate(g.itertuples()):
         x = PAD + i * step + (step - bw) / 2
         h = r_.sc / mx * BH
-        tip = (f'<b>{e(r_.circuit_short_name)}</b> — manche {int(r_.round)}<br>'
-               f'{int(r_.sc)} tour(s) neutralisé(s) sur {int(r_.laps)}'
-               + (f'<br>{int(r_.wet)} tour(s) sous la pluie' if r_.wet else ''))
-        out.append(f'<rect class="hv" data-tip="{tip}" x="{x:.1f}" y="{T+BH-h:.1f}" '
+        t = tip(f"{r_.circuit_short_name} — manche {int(r_.round)}",
+                f"{int(r_.sc)} tour(s) neutralisé(s) sur {int(r_.laps)}",
+                f"{int(r_.wet)} tour(s) sous la pluie" if r_.wet else "")
+        out.append(f'<rect class="hv" {t} x="{x:.1f}" y="{T+BH-h:.1f}" '
                    f'width="{bw:.1f}" height="{max(h,1):.1f}" '
                    f'rx="2" fill="{P.MUTED}" fill-opacity="{0.9 if r_.sc else 0.25}"/>')
         if r_.sc:
@@ -429,7 +444,7 @@ footer a { color:var(--accent) }
   transition:opacity .12s ease; }
 .tip.on { opacity:1 }
 .tip b { font-family:var(--display); letter-spacing:.02em }
-[data-tip] { cursor:crosshair }
+[data-t] { cursor:crosshair }
 .row, .trow .fill, .stat { transition:background .14s ease, transform .14s ease, filter .14s ease }
 .row:hover { background:#232B36 }
 .trow:hover .fill { filter:brightness(1.18) }
@@ -463,32 +478,53 @@ footer a { color:var(--accent) }
 
 JS = """
 (function () {
-  // Une seule infobulle pour toute la page, nourrie par les attributs data-tip.
+  // Une seule infobulle pour toute la page, nourrie par data-t (titre) et data-b (corps).
   var tip = document.createElement('div');
   tip.className = 'tip';
   document.body.appendChild(tip);
 
-  function show(html, x, y) {
-    tip.innerHTML = html;
+  // L'infobulle est CONSTRUITE, jamais interprétée : tout ce qui vient des
+  // données passe par textContent. Un attribut HTML est décodé à l'analyse, donc
+  // getAttribute() annule l'échappement ; le repasser à innerHTML rouvrirait la
+  // porte à l'injection, et les noms viennent d'une API tierce.
+  function place(x, y) {
     tip.classList.add('on');
     var w = tip.offsetWidth, h = tip.offsetHeight;
     tip.style.left = Math.min(Math.max(8, x + 16), window.innerWidth - w - 8) + 'px';
     var top = y - h - 16;
     tip.style.top = (top < 8 ? y + 20 : top) + 'px';
   }
+  function lines(parent, text) {
+    text.split('\\n').forEach(function (line, i) {
+      if (i || parent.firstChild) parent.appendChild(document.createElement('br'));
+      parent.appendChild(document.createTextNode(line));
+    });
+  }
+  function show(el, x, y) {
+    tip.textContent = '';
+    var t = el.getAttribute('data-t');
+    if (t) {
+      var b = document.createElement('b');
+      b.textContent = t;
+      tip.appendChild(b);
+    }
+    var body = el.getAttribute('data-b');
+    if (body) lines(tip, body);
+    place(x, y);
+  }
   function hide() { tip.classList.remove('on'); }
 
   function target(ev) {
     var n = ev.target;
-    return n && n.closest ? n.closest('[data-tip]') : null;
+    return n && n.closest ? n.closest('[data-t]') : null;
   }
   document.addEventListener('mouseover', function (ev) {
     var el = target(ev);
-    if (el) show(el.getAttribute('data-tip'), ev.clientX, ev.clientY);
+    if (el) show(el, ev.clientX, ev.clientY);
   });
   document.addEventListener('mousemove', function (ev) {
     var el = target(ev);
-    if (el) show(el.getAttribute('data-tip'), ev.clientX, ev.clientY);
+    if (el) show(el, ev.clientX, ev.clientY);
   });
   document.addEventListener('mouseout', function (ev) { if (target(ev)) hide(); });
 
@@ -521,19 +557,32 @@ JS = """
     guide.setAttribute('x1', X(r));
     guide.setAttribute('x2', X(r));
     guide.classList.add('on');
-    var rows = D.drivers.slice().sort(function (a, b) {
+    // Construit nœud par nœud, pour la même raison que l'infobulle générique.
+    tip.textContent = '';
+    var head = document.createElement('b');
+    head.textContent = 'Manche ' + r;
+    tip.appendChild(head);
+    D.drivers.slice().sort(function (a, b) {
       return b.cum[r - 1] - a.cum[r - 1];
-    }).map(function (p) {
+    }).forEach(function (p) {
       var d = dots[p.code];
       if (d) {
         d.setAttribute('cx', X(r));
         d.setAttribute('cy', Y(p.cum[r - 1]));
         d.classList.add('on');
       }
-      return '<span style="color:' + p.colour + '">&#9679;</span> ' + p.code +
-             ' <b>' + p.cum[r - 1] + '</b>';
-    }).join('<br>');
-    show('<b>Manche ' + r + '</b><br>' + rows, ev.clientX, ev.clientY);
+      tip.appendChild(document.createElement('br'));
+      var bullet = document.createElement('span');
+      bullet.textContent = '\\u25CF ';
+      // La couleur vient des données : on ne l'accepte que si c'est bien un code hexa.
+      if (/^#[0-9A-Fa-f]{6}$/.test(p.colour)) bullet.style.color = p.colour;
+      tip.appendChild(bullet);
+      tip.appendChild(document.createTextNode(p.code + ' '));
+      var pts = document.createElement('b');
+      pts.textContent = p.cum[r - 1];
+      tip.appendChild(pts);
+    });
+    place(ev.clientX, ev.clientY);
   });
   svg.addEventListener('mouseleave', clear);
 
