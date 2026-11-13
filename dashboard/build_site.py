@@ -155,9 +155,15 @@ def evolution(ctx):
     for p in s[:6]:
         pts = " ".join(f"{X(i+1):.1f},{Y(v):.1f}" for i, v in enumerate(p["cum"]))
         dash = ' stroke-dasharray="6 4"' if p["num"] in dashed else ""
-        g.append(f'<polyline points="{pts}" fill="none" stroke="{p["colour"]}" '
-                 f'stroke-width="2.5" stroke-linejoin="round"{dash}/>')
+        g.append(f'<polyline class="ln" data-code="{e(p["code"])}" points="{pts}" fill="none" '
+                 f'stroke="{p["colour"]}" stroke-width="2.5" stroke-linejoin="round"{dash}/>')
         g.append(f'<circle cx="{X(n):.1f}" cy="{Y(p["cum"][n-1]):.1f}" r="3.5" fill="{p["colour"]}"/>')
+        g.append(f'<circle class="dot" data-code="{e(p["code"])}" r="4.5" fill="{p["colour"]}" '
+                 f'cx="-99" cy="-99"/>')
+    # Règle de lecture : un trait qui suit le curseur, plus un point par pilote.
+    # Pas de rectangle de capture : il passerait au-dessus des courbes et les
+    # empêcherait de recevoir le survol. Le SVG lui-même écoute la souris.
+    g.append(f'<line class="guide" x1="0" y1="{T}" x2="0" y2="{H-B}"/>')
 
     lab = sorted(({"y": Y(p["cum"][n - 1]), "p": p} for p in s[:6]), key=lambda x: x["y"])
     for i in range(1, len(lab)):
@@ -166,7 +172,11 @@ def evolution(ctx):
         p = it["p"]
         g.append(f'<text x="{W-R+12}" y="{it["y"]+4:.1f}" class="lbl" fill="{p["colour"]}">'
                  f'{e(p["code"])}<tspan class="lblp" dx="8">{int(p["cum"][n-1])}</tspan></text>')
-    return svg(W, H, "".join(g), "Points cumulés par pilote, manche par manche")
+    chart = svg(W, H, "".join(g), "Points cumulés par pilote, manche par manche", cls="evo")
+    data = dict(n=n, L=L, R=R, W=W, T=T, B=B, H=H, maxp=mx,
+                drivers=[dict(code=p["code"], name=p["name"], colour=p["colour"],
+                              cum=[int(v) for v in p["cum"]]) for p in s[:6]])
+    return chart, data
 
 
 def constructors(d):
@@ -177,8 +187,11 @@ def constructors(d):
             .agg(points=("cumulative_points", "max"), colour=("team_colour", "first"))
             .reset_index().sort_values("points", ascending=False))
     mx = tot.points.max()
+    lead = tot.points.iloc[0]
     rows = "".join(
-        f'''<div class="trow"><span class="tname">{e(r.team_name)}</span>
+        f'''<div class="trow" data-tip="<b>{e(r.team_name)}</b><br>{int(r.points)} points{
+            '' if r.points == lead else f' — {int(lead - r.points)} de retard sur le leader'}">
+<span class="tname">{e(r.team_name)}</span>
 <span class="track"><span class="fill" style="width:{r.points/mx*100:.1f}%;
 background:{hexc(r.colour)}"></span></span>
 <span class="tpts">{int(r.points)}</span></div>''' for r in tot.itertuples())
@@ -213,7 +226,11 @@ def grid_section(ctx, d):
         w = abs(r.avg) / mx * half
         x = mid if r.avg >= 0 else mid - w
         col = P.GREEN if r.avg > 0 else P.LOSS
-        out.append(f'<rect x="{x:.1f}" y="{y+4}" width="{w:.1f}" height="{rowh-9}" rx="2" fill="{col}"/>')
+        who = e(drv.at[r.driver_number, "full_name"])
+        sens = "gagnées" if r.avg >= 0 else "perdues"
+        out.append(f'<rect class="hv" data-tip="<b>{who}</b><br>{abs(r.avg):.2f} place(s) {sens} '
+                   f'en moyenne<br>sur {int(r.races)} Grands Prix classés" '
+                   f'x="{x:.1f}" y="{y+4}" width="{w:.1f}" height="{rowh-9}" rx="2" fill="{col}"/>')
         out.append(f'<text x="{L-8}" y="{y+rowh/2+4}" class="ax" text-anchor="end">'
                    f'{e(drv.at[r.driver_number, "name_acronym"])}</text>')
         lx = mid + w + 6 if r.avg >= 0 else mid - w - 6
@@ -225,7 +242,8 @@ def grid_section(ctx, d):
     return svg(W, H, "".join(out), "Places gagnées en moyenne par pilote"), pen
 
 
-def tyres_section(d):
+def tyres_section(ctx, d):
+    drv = ctx["drv"]
     t = d["tyres"].copy()
     if t.empty:
         return "", 0
@@ -255,10 +273,15 @@ def tyres_section(d):
         col = P.TYRES.get(comp, P.MUTED)
         out.append(f'<text x="{L-12}" y="{cy+4:.1f}" class="ax" text-anchor="end">'
                    f'{e(comp.title())}</text>')
-        for j, v in enumerate(inside[inside.compound == comp].slope):
+        for j, r in enumerate(inside[inside.compound == comp].itertuples()):
             # Dispersion déterministe : la page doit être identique à chaque génération.
             jit = ((j * 37) % 23 - 11) / 11 * (rowh / 2 - 10)
-            out.append(f'<circle cx="{X(v):.1f}" cy="{cy+jit:.1f}" r="2.4" fill="{col}" '
+            num = int(r.driver_number)
+            who = e(drv.at[num, "name_acronym"]) if num in drv.index else num
+            out.append(f'<circle class="pt" data-tip="<b>{who}</b> — {e(comp.title())}<br>'
+                       f'{r.slope:+.3f} s/tour relatif au peloton<br>'
+                       f'relais {int(r.stint_number)}, {int(r.clean_laps)} tours propres" '
+                       f'cx="{X(r.slope):.1f}" cy="{cy+jit:.1f}" r="2.4" fill="{col}" '
                        f'fill-opacity="0.42"/>')
         med = float(g.slope.median())
         out.append(f'<line x1="{X(med):.1f}" y1="{cy-rowh/2+8:.1f}" x2="{X(med):.1f}" '
@@ -300,7 +323,11 @@ def conditions_section(ctx, d):
     for i, r_ in enumerate(g.itertuples()):
         x = PAD + i * step + (step - bw) / 2
         h = r_.sc / mx * BH
-        out.append(f'<rect x="{x:.1f}" y="{T+BH-h:.1f}" width="{bw:.1f}" height="{max(h,1):.1f}" '
+        tip = (f'<b>{e(r_.circuit_short_name)}</b> — manche {int(r_.round)}<br>'
+               f'{int(r_.sc)} tour(s) neutralisé(s) sur {int(r_.laps)}'
+               + (f'<br>{int(r_.wet)} tour(s) sous la pluie' if r_.wet else ''))
+        out.append(f'<rect class="hv" data-tip="{tip}" x="{x:.1f}" y="{T+BH-h:.1f}" '
+                   f'width="{bw:.1f}" height="{max(h,1):.1f}" '
                    f'rx="2" fill="{P.MUTED}" fill-opacity="{0.9 if r_.sc else 0.25}"/>')
         if r_.sc:
             out.append(f'<text x="{x+bw/2:.1f}" y="{T+BH-h-5:.1f}" class="small" '
@@ -315,8 +342,9 @@ def conditions_section(ctx, d):
             int(g.sc.sum()), int((g.wet > 0).sum()))
 
 
-def svg(w, h, body, label):
-    return (f'<div class="chart"><svg viewBox="0 0 {w} {h}" role="img" '
+def svg(w, h, body, label, cls=""):
+    c = f" {cls}" if cls else ""
+    return (f'<div class="chart"><svg class="plot{c}" viewBox="0 0 {w} {h}" role="img" '
             f'aria-label="{e(label)}">{body}</svg></div>')
 
 
@@ -394,6 +422,37 @@ svg { width:100%; height:auto; display:block }
 footer { margin-top:3.6rem; padding-top:1.4rem; border-top:1px solid var(--line);
   color:var(--muted); font-size:.85rem; line-height:1.6 }
 footer a { color:var(--accent) }
+/* --- Interaction : survol, infobulles, règle de lecture --- */
+.tip { position:fixed; z-index:50; pointer-events:none; opacity:0; max-width:17rem;
+  background:#0E1218; border:1px solid var(--line); border-radius:7px; padding:.5rem .65rem;
+  font-size:.82rem; line-height:1.5; box-shadow:0 10px 30px rgba(0,0,0,.5);
+  transition:opacity .12s ease; }
+.tip.on { opacity:1 }
+.tip b { font-family:var(--display); letter-spacing:.02em }
+[data-tip] { cursor:crosshair }
+.row, .trow .fill, .stat { transition:background .14s ease, transform .14s ease, filter .14s ease }
+.row:hover { background:#232B36 }
+.trow:hover .fill { filter:brightness(1.18) }
+.stat:hover { background:#1F2630 }
+.plot .hv { transition:filter .12s ease }
+.plot .hv:hover { filter:brightness(1.3) }
+/* Un contour transparent élargit la cible sans rien changer à l'apparence :
+   une règle CSS plutôt qu'un attribut sur chacun des ~900 points. */
+.plot .pt { transition:r .12s ease, fill-opacity .12s ease; stroke:transparent; stroke-width:5 }
+.plot .pt:hover { r:5; fill-opacity:1 }
+.plot .ln { transition:opacity .16s ease, stroke-width .16s ease }
+.plot.dim .ln:not(.hot) { opacity:.15 }
+.plot .ln.hot { stroke-width:4.5 }
+.guide { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 4; opacity:0;
+  transition:opacity .12s ease; pointer-events:none }
+.guide.on { opacity:.8 }
+.dot { opacity:0; transition:opacity .12s ease; pointer-events:none }
+.dot.on { opacity:1 }
+.hit { cursor:crosshair }
+@media (prefers-reduced-motion: no-preference) {
+  .fill { transform-origin:left center; animation:grow .85s cubic-bezier(.2,.8,.2,1) both }
+  @keyframes grow { from { transform:scaleX(0) } to { transform:scaleX(1) } }
+}
 @media (max-width:620px) {
   h1 { font-size:1.7rem }
   .row { grid-template-columns:1.8rem 4px 2.9rem 1fr 3.4rem }
@@ -402,15 +461,108 @@ footer a { color:var(--accent) }
 }
 """
 
+JS = """
+(function () {
+  // Une seule infobulle pour toute la page, nourrie par les attributs data-tip.
+  var tip = document.createElement('div');
+  tip.className = 'tip';
+  document.body.appendChild(tip);
+
+  function show(html, x, y) {
+    tip.innerHTML = html;
+    tip.classList.add('on');
+    var w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(Math.max(8, x + 16), window.innerWidth - w - 8) + 'px';
+    var top = y - h - 16;
+    tip.style.top = (top < 8 ? y + 20 : top) + 'px';
+  }
+  function hide() { tip.classList.remove('on'); }
+
+  function target(ev) {
+    var n = ev.target;
+    return n && n.closest ? n.closest('[data-tip]') : null;
+  }
+  document.addEventListener('mouseover', function (ev) {
+    var el = target(ev);
+    if (el) show(el.getAttribute('data-tip'), ev.clientX, ev.clientY);
+  });
+  document.addEventListener('mousemove', function (ev) {
+    var el = target(ev);
+    if (el) show(el.getAttribute('data-tip'), ev.clientX, ev.clientY);
+  });
+  document.addEventListener('mouseout', function (ev) { if (target(ev)) hide(); });
+
+  // Règle de lecture sur la courbe du championnat.
+  var node = document.getElementById('evo-data');
+  var svg = document.querySelector('svg.evo');
+  if (!node || !svg) return;
+  var D = JSON.parse(node.textContent);
+  var guide = svg.querySelector('.guide');
+  var dots = {};
+  Array.prototype.forEach.call(svg.querySelectorAll('.dot'), function (d) {
+    dots[d.getAttribute('data-code')] = d;
+  });
+  var span = D.W - D.L - D.R;
+  function X(r) { return D.L + (r - 1) / Math.max(D.n - 1, 1) * span; }
+  function Y(v) { return (D.H - D.B) - v / D.maxp * (D.H - D.B - D.T); }
+
+  function clear() {
+    guide.classList.remove('on');
+    Object.keys(dots).forEach(function (k) { dots[k].classList.remove('on'); });
+    hide();
+  }
+
+  svg.addEventListener('mousemove', function (ev) {
+    var box = svg.getBoundingClientRect();
+    var vx = (ev.clientX - box.left) / box.width * D.W;
+    if (vx < D.L - 8 || vx > D.W - D.R + 8) { clear(); return; }
+    var r = Math.round((vx - D.L) / span * (D.n - 1)) + 1;
+    r = Math.max(1, Math.min(D.n, r));
+    guide.setAttribute('x1', X(r));
+    guide.setAttribute('x2', X(r));
+    guide.classList.add('on');
+    var rows = D.drivers.slice().sort(function (a, b) {
+      return b.cum[r - 1] - a.cum[r - 1];
+    }).map(function (p) {
+      var d = dots[p.code];
+      if (d) {
+        d.setAttribute('cx', X(r));
+        d.setAttribute('cy', Y(p.cum[r - 1]));
+        d.classList.add('on');
+      }
+      return '<span style="color:' + p.colour + '">&#9679;</span> ' + p.code +
+             ' <b>' + p.cum[r - 1] + '</b>';
+    }).join('<br>');
+    show('<b>Manche ' + r + '</b><br>' + rows, ev.clientX, ev.clientY);
+  });
+  svg.addEventListener('mouseleave', clear);
+
+  // Survoler une courbe l'isole du reste du plateau.
+  Array.prototype.forEach.call(svg.querySelectorAll('.ln'), function (ln) {
+    ln.addEventListener('mouseenter', function () {
+      svg.classList.add('dim');
+      ln.classList.add('hot');
+    });
+    ln.addEventListener('mouseleave', function () {
+      svg.classList.remove('dim');
+      ln.classList.remove('hot');
+    });
+  });
+})();
+"""
+
 PIPE = [("Source", "OpenF1 API"), ("Ingestion", "Python, 30 req/min"),
         ("Entrepôt", "BigQuery raw"), ("Transformation", "dbt staging → marts"),
         ("Sortie", "cette page")]
 
 
 def render(ctx, d):
+    import json
     grid_svg, penalties = grid_section(ctx, d)
-    tyre_svg, n_stints = tyres_section(d)
+    tyre_svg, n_stints = tyres_section(ctx, d)
     cond_svg, sc_laps, wet_races = conditions_section(ctx, d)
+    evo_svg, evo_data = evolution(ctx)
+    evo_json = json.dumps(evo_data, ensure_ascii=False)
     season = int(ctx["races"].year.max())
 
     pipe = '<span class="arrow">→</span>'.join(
@@ -440,8 +592,9 @@ def render(ctx, d):
 <section>
   <h2>L’écart s’est creusé</h2>
   <p class="note">Cumul manche par manche. Les six premiers en couleur d’écurie, le reste du
-  plateau en gris. Un coéquipier partage la couleur de son équipe : il est tracé en pointillés.</p>
-  {evolution(ctx)}
+  plateau en gris. Un coéquipier partage la couleur de son équipe : il est tracé en pointillés.
+  <strong>Promène la souris</strong> sur le graphique pour lire le classement à chaque manche.</p>
+  {evo_svg}
 </section>
 
 <section>
@@ -508,6 +661,8 @@ def render(ctx, d):
   <a href="https://github.com/AdriBoui/thef1lab">GitHub</a>.
 </footer>
 </div>
+<script id="evo-data" type="application/json">{evo_json}</script>
+<script>{JS}</script>
 </body>
 </html>
 """
