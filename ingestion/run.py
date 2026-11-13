@@ -22,6 +22,11 @@ SESSION_LEVEL_ENDPOINTS = [
     ("raw_session_result", "session_result"),
 ]
 
+# Only called for qualifying sessions (OpenF1 keys the race grid by them).
+QUALIFYING_ENDPOINTS = [
+    ("raw_starting_grid", "starting_grid"),
+]
+
 
 def _tag_ingested_at(rows: list[dict], ingested_at: str) -> list[dict]:
     for row in rows:
@@ -60,7 +65,10 @@ def run(year: int | None = None) -> None:
                 session_key,
                 session.get("session_name"),
             )
-            for table_name, method_name in SESSION_LEVEL_ENDPOINTS:
+            endpoints = SESSION_LEVEL_ENDPOINTS
+            if session.get("session_type") == "Qualifying":
+                endpoints = SESSION_LEVEL_ENDPOINTS + QUALIFYING_ENDPOINTS
+            for table_name, method_name in endpoints:
                 try:
                     rows = getattr(client, method_name)(session_key=session_key)
                 except Exception:

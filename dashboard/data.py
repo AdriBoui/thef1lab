@@ -55,6 +55,13 @@ def _client():
     return bigquery.Client(project=cfg["project"], location=cfg["location"])
 
 
+OPTIONAL = {  # requête: message affiché si sa table manque
+    "stints": "Stratégie pneus indisponible : lance `dbt run` pour créer marts.fact_stints.",
+    "grid": "Grille de départ indisponible : relance l'ingestion puis `dbt run` "
+            "pour créer marts.fact_grid_vs_result.",
+}
+
+
 @st.cache_data(ttl=3600, show_spinner="Chargement des données…")
 def load_all() -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Renvoie (tables, avertissements). Cache 1 h = coût BigQuery quasi nul."""
@@ -74,10 +81,9 @@ def load_all() -> tuple[dict[str, pd.DataFrame], list[str]]:
                 raise ValueError(f"colonnes manquantes : {', '.join(sorted(missing))}")
             tables[name] = df[CONTRACT[name]]
         except Exception as e:
-            if name == "stints":  # optionnel
+            if name in OPTIONAL:  # une vue en moins plutôt qu'un dashboard en panne
                 tables[name] = pd.DataFrame(columns=CONTRACT[name])
-                warnings.append("Stratégie pneus indisponible : lance `dbt run` "
-                                "pour créer marts.fact_stints.")
+                warnings.append(OPTIONAL[name])
             else:
                 raise RuntimeError(f"Requête « {name} » en échec : {e}") from e
     return _clean(tables), warnings
@@ -106,4 +112,8 @@ def _clean(t: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         t[k] = t[k][t[k].driver_number.isin(known)]
     s = t["stints"]
     t["stints"] = s.dropna(subset=["lap_start", "lap_end"])
+    g = t["grid"].copy()
+    for col in g.columns.drop(["session_key", "driver_number"]):
+        g[col] = pd.to_numeric(g[col], errors="coerce")  # NULL = non classé / départ des stands
+    t["grid"] = g[g.driver_number.isin(known)]
     return t

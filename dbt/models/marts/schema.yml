@@ -105,6 +105,30 @@ models:
               config:
                 severity: warn
 
+  - name: fact_grid_vs_result
+    description: >
+      One row per driver per Grand Prix or Sprint: qualifying position, real starting grid
+      (penalties applied) and finishing position, with grid penalty places and positions gained.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns: ['session_key', 'driver_number']
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships:
+              to: ref('dim_session')
+              field: session_key
+      - name: grid_position
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+              max_value: 30
+      - name: positions_gained
+        data_tests:
+          - dbt_utils.accepted_range:
+              min_value: -29
+              max_value: 29
+
   - name: mart_pit_stop_performance
     description: Pit-stop performance ranked by team (median stationary time) across the season's races.
     columns:

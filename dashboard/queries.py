@@ -21,6 +21,10 @@ CONTRACT = {
     "pit_stops": ["session_key", "driver_number", "lap_number", "stop_duration"],
     "stints":    ["session_key", "driver_number", "stint_number",
                   "compound", "lap_start", "lap_end"],
+    # Qualif → grille réelle (pénalités incluses) → arrivée, Grand Prix uniquement
+    "grid":      ["session_key", "driver_number", "qualifying_position",
+                  "grid_position", "finish_position", "grid_penalty_places",
+                  "positions_gained"],
     # Une ligne par équipe et par week-end (GP + Sprint), cumul déjà calculé par dbt
     "constructors": ["team_name", "team_colour", "meeting_key",
                      "points", "cumulative_points"],
@@ -82,6 +86,17 @@ QUERIES = {
         from `{project}.{marts}.fact_stints` t
         join `{project}.{marts}.dim_session` s using (session_key)
         where s.session_name = 'Race' and s.year = {season}
+    """,
+
+    # La grille vient de l'endpoint OpenF1 starting_grid, pas du classement des
+    # qualifs : une pénalité moteur fait partir un pilote plus loin (voir dbt).
+    "grid": """
+        select g.session_key, g.driver_number, g.qualifying_position,
+               g.grid_position, g.finish_position, g.grid_penalty_places,
+               g.positions_gained
+        from `{project}.{marts}.fact_grid_vs_result` g
+        join `{project}.{marts}.dim_session` s using (session_key)
+        where g.session_name = 'Race' and s.year = {season}
     """,
 
     # Équipe « à date » : un pilote transféré en cours de saison laisse ses

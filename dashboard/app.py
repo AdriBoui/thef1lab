@@ -18,6 +18,7 @@ except Exception as e:
 
 races, drivers, results = D["races"], D["drivers"], D["results"]
 laps, pits, stints = D["laps"], D["pit_stops"], D["stints"]
+grid = D["grid"]
 constructors = D["constructors"]
 done_check = races.session_key.isin(results.session_key)
 if races.empty or not done_check.any():
@@ -72,7 +73,7 @@ if is_demo():
     st.markdown('<div class="demo">Mode démo : données fictives. Ajoute tes credentials BigQuery '
                 '(voir README) pour afficher tes vraies données.</div>', unsafe_allow_html=True)
 
-tab_champ, tab_race, tab_duel = st.tabs(["Championnat", "Course", "Duel"])
+tab_champ, tab_race, tab_grid, tab_duel = st.tabs(["Championnat", "Course", "Grille → arrivée", "Duel"])
 
 # ---------- Classement ----------
 # Grand Prix + Sprints, rattachés à la manche du week-end
@@ -243,6 +244,82 @@ with tab_race:
             fig.update_layout(xaxis=dict(range=[0, ps.stop_duration.max() * 1.15], visible=False),
                               yaxis=dict(showgrid=False))
             chart(fig, 30 * len(ps) + 40)
+
+# ---------- Grille → arrivée ----------
+# La grille vient de dbt (fact_grid_vs_result) : pénalités incluses, ce n'est
+# pas le classement des qualifs.
+with tab_grid:
+    g_labels = {k: v for k, v in labels.items() if k in set(grid.session_key)}
+    if not g_labels:
+        st.info("Pas encore de grille de départ : relance l'ingestion puis `dbt run`.")
+    else:
+        skg = st.selectbox("Grand Prix", list(g_labels)[::-1], format_func=g_labels.get, key="grid_race")
+        gr = grid[grid.session_key == skg].sort_values("grid_position", na_position="last")
+        classified = gr.dropna(subset=["positions_gained"])
+        penalised = gr[gr.grid_penalty_places > 0]
+        if not classified.empty:
+            best = classified.loc[classified.positions_gained.idxmax()]
+            pen_txt = (f" {len(penalised)} pilote{'s' if len(penalised) > 1 else ''} "
+                       f"{'sont partis' if len(penalised) > 1 else 'est parti'} plus loin que "
+                       "leur place en qualif (pénalités)." if len(penalised) else "")
+            st.markdown(f'<p class="headline"><b>{name(best.driver_number)}</b> a gagné '
+                        f'{int(best.positions_gained)} places, de P{int(best.grid_position)} '
+                        f'à P{int(best.finish_position)}.{pen_txt}</p>', unsafe_allow_html=True)
+
+        st.markdown('<div class="section-title">De la grille à l’arrivée</div>'
+                    '<div class="note">Rond : place sur la grille. Losange : arrivée (vert = places gagnées). '
+                    'Rond creux : place en qualif, quand une pénalité a fait reculer le pilote.</div>',
+                    unsafe_allow_html=True)
+        fig = go.Figure()
+        for r in gr.itertuples():
+            y = code(r.driver_number)
+            if pd.notna(r.qualifying_position) and pd.notna(r.grid_position) and r.grid_penalty_places > 0:
+                fig.add_scatter(x=[r.qualifying_position, r.grid_position], y=[y, y], mode="lines",
+                                line=dict(color=T.MUTED, width=1, dash="dot"), showlegend=False, hoverinfo="skip")
+                fig.add_scatter(x=[r.qualifying_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(color="rgba(0,0,0,0)", size=10, line=dict(color=T.MUTED, width=2)),
+                                hovertemplate=f"{y} : P{int(r.qualifying_position)} en qualif, "
+                                              f"{int(r.grid_penalty_places)} place(s) de pénalité<extra></extra>")
+            if pd.notna(r.finish_position) and pd.notna(r.grid_position):
+                gain = r.positions_gained
+                c = T.GREEN if gain > 0 else T.LOSS if gain < 0 else T.MUTED
+                fig.add_scatter(x=[r.grid_position, r.finish_position], y=[y, y], mode="lines",
+                                line=dict(color=c, width=3), showlegend=False, hoverinfo="skip")
+                fig.add_scatter(x=[r.finish_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(symbol="diamond", color=c, size=11, line=dict(color=T.TARMAC, width=1)),
+                                hovertemplate=f"{y} : P{int(r.grid_position)} → P{int(r.finish_position)} "
+                                              f"({int(gain):+d})<extra></extra>")
+            if pd.notna(r.grid_position):
+                fig.add_scatter(x=[r.grid_position], y=[y], mode="markers", showlegend=False,
+                                marker=dict(color=colour(r.driver_number), size=11, line=dict(color=T.TARMAC, width=2)),
+                                hovertemplate=f"{y} : départ P{int(r.grid_position)}"
+                                              f"{'' if pd.notna(r.finish_position) else ', non classé'}<extra></extra>")
+        n_pos = int(max(gr[["qualifying_position", "grid_position", "finish_position"]].max().max(), len(gr)))
+        fig.update_layout(xaxis=dict(title="Position (vers la droite = places gagnées)", autorange="reversed",
+                                     dtick=1, range=[n_pos + 0.5, 0.5]),
+                          yaxis=dict(autorange="reversed", showgrid=False,
+                                     categoryorder="array", categoryarray=[code(n) for n in gr.driver_number]))
+        chart(fig, 24 * len(gr) + 70)
+
+        st.markdown('<div class="section-title">Sur la saison : qui remonte le plus ?</div>'
+                    '<div class="note">Moyenne des places gagnées par Grand Prix, depuis la vraie grille. '
+                    'Arrivées classées uniquement, au moins 3 courses.</div>', unsafe_allow_html=True)
+        season_gain = (grid.dropna(subset=["positions_gained"]).groupby("driver_number")
+                       .agg(avg=("positions_gained", "mean"), races=("positions_gained", "size"))
+                       .reset_index())
+        penalties = grid[grid.grid_penalty_places > 0].groupby("driver_number").size()
+        season_gain["penalties"] = season_gain.driver_number.map(penalties).fillna(0).astype(int)
+        season_gain = season_gain[season_gain.races >= 3].sort_values("avg")
+        fig = go.Figure(go.Bar(
+            x=season_gain["avg"], y=[code(n) for n in season_gain.driver_number], orientation="h",
+            marker_color=[T.GREEN if v > 0 else T.LOSS for v in season_gain["avg"]],
+            text=season_gain["avg"].map("{:+.1f}".format), textposition="outside", cliponaxis=False,
+            customdata=season_gain[["races", "penalties"]],
+            hovertemplate="%{y} : %{x:+.2f} places par course<br>%{customdata[0]} courses classées, "
+                          "%{customdata[1]} pénalité(s) de grille<extra></extra>"))
+        fig.update_layout(xaxis=dict(zeroline=True, zerolinecolor=T.MUTED, title="Places gagnées en moyenne"),
+                          yaxis=dict(showgrid=False), margin=dict(l=10, r=50))
+        chart(fig, 22 * len(season_gain) + 70)
 
 # ---------- Duel ----------
 with tab_duel:
